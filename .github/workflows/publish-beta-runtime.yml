@@ -1,0 +1,234 @@
+name: Publish Axemetric Caller Beta Runtime
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "runtime/**"
+      - ".github/workflows/publish-beta-runtime.yml"
+
+permissions:
+  contents: write
+
+env:
+  RUNTIME_VERSION: "20.4.0-beta.1"
+  RELEASE_TAG: "beta-v20.4.0"
+  OLLAMA_VERSION: "v0.34.0"
+  OLLAMA_URL: "https://github.com/ollama/ollama/releases/download/v0.34.0/ollama-windows-amd64.zip"
+  QWEN_MODEL: "qwen3:4b"
+  PART_SIZE: "1800000000"
+
+jobs:
+  build-runtime:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Prepare directories
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force stage, work, release-assets | Out-Null
+          Write-Host "Free disk before build:"
+          Get-PSDrive C | Format-Table -AutoSize
+
+      - name: Download portable Ollama
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          curl.exe -L --fail --retry 5 --retry-delay 3 `
+            -o work/ollama-windows-amd64.zip `
+            $env:OLLAMA_URL
+          New-Item -ItemType Directory -Force stage/ollama | Out-Null
+          Expand-Archive work/ollama-windows-amd64.zip stage/ollama -Force
+          $ollama = Get-ChildItem stage/ollama -Recurse -Filter ollama.exe | Select-Object -First 1
+          if (-not $ollama) { throw 'ollama.exe missing from official Windows archive' }
+          if ($ollama.Directory.FullName -ne (Resolve-Path stage/ollama).Path) {
+            Copy-Item (Join-Path $ollama.Directory.FullName '*') stage/ollama -Recurse -Force
+          }
+          Remove-Item work/ollama-windows-amd64.zip -Force
+
+      - name: Pull Qwen model into portable model store
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:OLLAMA_MODELS = (Resolve-Path stage).Path + '\qwen-model'
+          New-Item -ItemType Directory -Force $env:OLLAMA_MODELS | Out-Null
+          $ollama = (Resolve-Path stage/ollama/ollama.exe).Path
+          $server = Start-Process -FilePath $ollama -ArgumentList 'serve' -PassThru -WindowStyle Hidden
+          try {
+            $ready = $false
+            for ($i = 0; $i -lt 90; $i++) {
+              try {
+                $r = Invoke-WebRequest 'http://127.0.0.1:11434/api/tags' -UseBasicParsing -TimeoutSec 2
+                if ($r.StatusCode -eq 200) { $ready = $true; break }
+              } catch {}
+              Start-Sleep -Seconds 2
+            }
+            if (-not $ready) { throw 'Ollama did not become ready' }
+            & $ollama pull $env:QWEN_MODEL
+            if ($LASTEXITCODE -ne 0) { throw 'Qwen model pull failed' }
+          } finally {
+            if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue }
+          }
+          if (-not (Get-ChildItem $env:OLLAMA_MODELS -Recurse -File | Select-Object -First 1)) { throw 'Qwen model store is empty' }
+
+      - name: Install Chatterbox build dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m pip install --upgrade pip wheel setuptools
+          pip install pyinstaller fastapi uvicorn pydantic huggingface_hub faster-whisper chatterbox-tts
+          pip install --force-reinstall torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu126
+
+      - name: Pre-cache Whisper and Chatterbox Nano models
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:HF_HOME = (Resolve-Path stage).Path + '\speech-cache'
+          $env:HUGGINGFACE_HUB_CACHE = $env:HF_HOME + '\hub'
+          New-Item -ItemType Directory -Force $env:HF_HOME | Out-Null
+          @'
+          import os
+          from faster_whisper import WhisperModel
+          from chatterbox.tts_turbo import ChatterboxTurboTTS
+
+          cache = os.environ['HF_HOME']
+          print('Caching faster-whisper small.en...')
+          WhisperModel('small.en', device='cpu', compute_type='int8', download_root=cache)
+          print('Caching Chatterbox Nano...')
+          ChatterboxTurboTTS.from_pretrained(device='cpu', nano=True)
+          print('Model cache ready.')
+          '@ | Set-Content work/precache.py -Encoding UTF8
+          python work/precache.py
+
+      - name: Build portable Chatterbox executable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m PyInstaller `
+            --noconfirm --clean --onedir --noconsole `
+            --name chatterbox-server `
+            --distpath work/chatterbox-dist `
+            --workpath work/chatterbox-work `
+            --specpath work/chatterbox-spec `
+            --collect-all chatterbox `
+            --collect-all torch `
+            --collect-all torchaudio `
+            runtime/chatterbox_bridge.py
+          if (-not (Test-Path work/chatterbox-dist/chatterbox-server/chatterbox-server.exe)) { throw 'Chatterbox executable missing' }
+          New-Item -ItemType Directory -Force stage/chatterbox | Out-Null
+          Copy-Item work/chatterbox-dist/chatterbox-server/* stage/chatterbox -Recurse -Force
+          Remove-Item work/chatterbox-dist, work/chatterbox-work, work/chatterbox-spec -Recurse -Force -ErrorAction SilentlyContinue
+          python -m pip cache purge
+          Write-Host "Free disk after runtime preparation:"
+          Get-PSDrive C | Format-Table -AutoSize
+
+      - name: Package and split runtime assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $repo = 'SumamaAhmed69/Axemetric-Caller-Beta-Runtime'
+          $tag = $env:RELEASE_TAG
+          $partSize = [int64]$env:PART_SIZE
+          $packages = @()
+
+          function Hash-File([string]$Path) {
+            return (Get-FileHash -Algorithm SHA256 $Path).Hash.ToLowerInvariant()
+          }
+
+          function Split-File([string]$Path, [string]$BaseName) {
+            $parts = @()
+            $input = [System.IO.File]::OpenRead((Resolve-Path $Path))
+            try {
+              $buffer = New-Object byte[] (8MB)
+              $index = 1
+              while ($input.Position -lt $input.Length) {
+                $partName = '{0}.part{1:D3}' -f $BaseName, $index
+                $partPath = Join-Path 'release-assets' $partName
+                $output = [System.IO.File]::Create($partPath)
+                try {
+                  $written = [int64]0
+                  while ($written -lt $partSize -and $input.Position -lt $input.Length) {
+                    $want = [Math]::Min($buffer.Length, $partSize - $written)
+                    $read = $input.Read($buffer, 0, [int]$want)
+                    if ($read -le 0) { break }
+                    $output.Write($buffer, 0, $read)
+                    $written += $read
+                  }
+                } finally { $output.Dispose() }
+                $info = Get-Item $partPath
+                $parts += [ordered]@{
+                  file = $partName
+                  url = "https://github.com/$repo/releases/download/$tag/$partName"
+                  sha256 = Hash-File $partPath
+                  size = [int64]$info.Length
+                }
+                $index++
+              }
+            } finally { $input.Dispose() }
+            return ,$parts
+          }
+
+          foreach ($name in @('ollama','qwen-model','chatterbox','speech-cache')) {
+            $src = (Resolve-Path (Join-Path 'stage' $name)).Path
+            $archive = Join-Path 'work' "$name.zip"
+            if (Test-Path $archive) { Remove-Item $archive -Force }
+            & 7z a -tzip -mx=5 $archive "$src\*"
+            if ($LASTEXITCODE -ne 0 -or -not (Test-Path $archive)) { throw "Failed to package $name" }
+            $archiveInfo = Get-Item $archive
+            $parts = Split-File $archive "$name.zip"
+            $packages += [ordered]@{
+              name = $name
+              sha256 = Hash-File $archive
+              size = [int64]$archiveInfo.Length
+              profiles = @('performance','balanced','compatibility')
+              parts = $parts
+            }
+            Remove-Item $archive -Force
+            Remove-Item (Join-Path 'stage' $name) -Recurse -Force
+          }
+
+          $manifest = [ordered]@{
+            schema = 2
+            version = $env:RUNTIME_VERSION
+            channel = 'beta-github'
+            repository = $repo
+            release_tag = $tag
+            generated_at = (Get-Date).ToUniversalTime().ToString('o')
+            packages = $packages
+          }
+          $manifest | ConvertTo-Json -Depth 8 | Set-Content release-assets/manifest.json -Encoding UTF8
+          Get-FileHash release-assets/* -Algorithm SHA256 | Format-Table -AutoSize
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release delete $env:RELEASE_TAG --yes --cleanup-tag 2>$null
+          gh release create $env:RELEASE_TAG `
+            --target $env:GITHUB_SHA `
+            --title "Axemetric Caller Beta Runtime $env:RUNTIME_VERSION" `
+            --notes "Public runtime payload for Axemetric Caller beta testers. The desktop app downloads and verifies these assets automatically."
+          Get-ChildItem release-assets -File | Sort-Object Name | ForEach-Object {
+            Write-Host "Uploading $($_.Name) ($([math]::Round($_.Length/1MB,1)) MB)"
+            gh release upload $env:RELEASE_TAG $_.FullName --clobber
+          }
+
+      - name: Verify published manifest
+        shell: pwsh
+        run: |
+          $url = "https://github.com/SumamaAhmed69/Axemetric-Caller-Beta-Runtime/releases/download/$env:RELEASE_TAG/manifest.json"
+          curl.exe -L --fail --retry 5 -o work/published-manifest.json $url
+          $doc = Get-Content work/published-manifest.json -Raw | ConvertFrom-Json
+          if ($doc.channel -ne 'beta-github' -or $doc.repository -ne 'SumamaAhmed69/Axemetric-Caller-Beta-Runtime') { throw 'Published manifest identity mismatch' }
+          if ($doc.packages.Count -ne 4) { throw 'Published manifest package count mismatch' }
+          Write-Host 'Beta runtime release published successfully.'
