@@ -11,12 +11,16 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: axemetric-beta-runtime
+  cancel-in-progress: true
+
 env:
   RUNTIME_VERSION: "20.4.0-beta.1"
   RELEASE_TAG: "beta-v20.4.0"
   OLLAMA_VERSION: "v0.34.0"
   OLLAMA_URL: "https://github.com/ollama/ollama/releases/download/v0.34.0/ollama-windows-amd64.zip"
-  CHATTERBOX_SOURCE: "git+https://github.com/resemble-ai/chatterbox.git@master"
+  CHATTERBOX_SOURCE: "git+https://github.com/resemble-ai/chatterbox.git@5de7a54aa4e5e2baadb0182dde554908b48b85c2"
   QWEN_MODEL: "qwen3:4b"
   PART_SIZE: "1800000000"
 
@@ -86,16 +90,20 @@ jobs:
           $ErrorActionPreference = 'Stop'
           python -m pip install --upgrade pip wheel setuptools
           pip install pyinstaller fastapi uvicorn pydantic huggingface_hub faster-whisper chatterbox-tts
-          pip install --force-reinstall torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu126
-          # The published 0.1.7 wheel currently trails upstream Nano support.
-          # Keep its pinned dependencies, then replace only the chatterbox package
-          # with the upstream implementation that exposes nano=True.
+          # Nano is fast enough for beta CPU inference, while Ollama can still
+          # use the tester's NVIDIA GPU. CPU PyTorch greatly reduces download size
+          # and keeps this runtime usable on non-CUDA machines.
+          pip install --force-reinstall torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cpu
+          # PyPI 0.1.7 currently trails Nano support. Keep its dependency set,
+          # then replace the package itself with the pinned upstream Nano commit.
           pip install --force-reinstall --no-deps $env:CHATTERBOX_SOURCE
           @'
           import inspect
+          import torch
           from chatterbox.tts_turbo import ChatterboxTurboTTS
           sig = inspect.signature(ChatterboxTurboTTS.from_pretrained)
           print('ChatterboxTurboTTS.from_pretrained', sig)
+          print('Torch CUDA available in beta TTS runtime:', torch.cuda.is_available())
           if 'nano' not in sig.parameters:
               raise SystemExit('Installed Chatterbox source does not expose Nano support')
           '@ | python -
@@ -216,6 +224,10 @@ jobs:
             channel = 'beta-github'
             repository = $repo
             release_tag = $tag
+            ollama_version = $env:OLLAMA_VERSION
+            qwen_model = $env:QWEN_MODEL
+            chatterbox_commit = '5de7a54aa4e5e2baadb0182dde554908b48b85c2'
+            tts_runtime = 'cpu'
             generated_at = (Get-Date).ToUniversalTime().ToString('o')
             packages = $packages
           }
@@ -252,4 +264,5 @@ jobs:
           $doc = Get-Content work/published-manifest.json -Raw | ConvertFrom-Json
           if ($doc.channel -ne 'beta-github' -or $doc.repository -ne 'SumamaAhmed69/Axemetric-Caller-Beta-Runtime') { throw 'Published manifest identity mismatch' }
           if ($doc.packages.Count -ne 4) { throw 'Published manifest package count mismatch' }
+          if ($doc.chatterbox_commit -ne '5de7a54aa4e5e2baadb0182dde554908b48b85c2') { throw 'Chatterbox source pin mismatch' }
           Write-Host 'Beta runtime release published successfully.'
