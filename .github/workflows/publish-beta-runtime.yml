@@ -16,6 +16,7 @@ env:
   RELEASE_TAG: "beta-v20.4.0"
   OLLAMA_VERSION: "v0.34.0"
   OLLAMA_URL: "https://github.com/ollama/ollama/releases/download/v0.34.0/ollama-windows-amd64.zip"
+  CHATTERBOX_SOURCE: "git+https://github.com/resemble-ai/chatterbox.git@master"
   QWEN_MODEL: "qwen3:4b"
   PART_SIZE: "1800000000"
 
@@ -86,6 +87,18 @@ jobs:
           python -m pip install --upgrade pip wheel setuptools
           pip install pyinstaller fastapi uvicorn pydantic huggingface_hub faster-whisper chatterbox-tts
           pip install --force-reinstall torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu126
+          # The published 0.1.7 wheel currently trails upstream Nano support.
+          # Keep its pinned dependencies, then replace only the chatterbox package
+          # with the upstream implementation that exposes nano=True.
+          pip install --force-reinstall --no-deps $env:CHATTERBOX_SOURCE
+          @'
+          import inspect
+          from chatterbox.tts_turbo import ChatterboxTurboTTS
+          sig = inspect.signature(ChatterboxTurboTTS.from_pretrained)
+          print('ChatterboxTurboTTS.from_pretrained', sig)
+          if 'nano' not in sig.parameters:
+              raise SystemExit('Installed Chatterbox source does not expose Nano support')
+          '@ | python -
 
       - name: Pre-cache Whisper and Chatterbox Nano models
         shell: pwsh
@@ -93,6 +106,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $env:HF_HOME = (Resolve-Path stage).Path + '\speech-cache'
           $env:HUGGINGFACE_HUB_CACHE = $env:HF_HOME + '\hub'
+          $env:HF_HUB_DISABLE_XET = '1'
           New-Item -ItemType Directory -Force $env:HF_HOME | Out-Null
           @'
           import os
@@ -103,7 +117,8 @@ jobs:
           print('Caching faster-whisper small.en...')
           WhisperModel('small.en', device='cpu', compute_type='int8', download_root=cache)
           print('Caching Chatterbox Nano...')
-          ChatterboxTurboTTS.from_pretrained(device='cpu', nano=True)
+          model = ChatterboxTurboTTS.from_pretrained(device='cpu', nano=True)
+          print('Nano sample rate:', model.sr)
           print('Model cache ready.')
           '@ | Set-Content work/precache.py -Encoding UTF8
           python work/precache.py
@@ -213,14 +228,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
-          gh release delete $env:RELEASE_TAG --yes --cleanup-tag 2>$null
+          gh release view $env:RELEASE_TAG *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release delete $env:RELEASE_TAG --yes --cleanup-tag
+            if ($LASTEXITCODE -ne 0) { throw 'Could not replace existing beta runtime release' }
+          }
           gh release create $env:RELEASE_TAG `
             --target $env:GITHUB_SHA `
             --title "Axemetric Caller Beta Runtime $env:RUNTIME_VERSION" `
             --notes "Public runtime payload for Axemetric Caller beta testers. The desktop app downloads and verifies these assets automatically."
+          if ($LASTEXITCODE -ne 0) { throw 'Could not create beta runtime release' }
           Get-ChildItem release-assets -File | Sort-Object Name | ForEach-Object {
             Write-Host "Uploading $($_.Name) ($([math]::Round($_.Length/1MB,1)) MB)"
             gh release upload $env:RELEASE_TAG $_.FullName --clobber
+            if ($LASTEXITCODE -ne 0) { throw "Release upload failed: $($_.Name)" }
           }
 
       - name: Verify published manifest
