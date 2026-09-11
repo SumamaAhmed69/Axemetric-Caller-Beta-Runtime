@@ -89,11 +89,12 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           python -m pip install --upgrade pip wheel setuptools
-          pip install pyinstaller fastapi uvicorn pydantic huggingface_hub faster-whisper chatterbox-tts
-          # Nano is fast enough for beta CPU inference, while Ollama can still
-          # use the tester's NVIDIA GPU. CPU PyTorch greatly reduces download size
-          # and keeps this runtime usable on non-CUDA machines.
-          pip install --force-reinstall torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cpu
+          pip install pyinstaller fastapi uvicorn pydantic huggingface_hub faster-whisper
+          # Install CPU PyTorch first so chatterbox-tts sees its exact pinned
+          # torch/torchaudio versions as already satisfied instead of downloading
+          # the much larger default Windows Torch wheel and replacing it later.
+          pip install torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cpu
+          pip install chatterbox-tts
           # PyPI 0.1.7 currently trails Nano support. Keep its dependency set,
           # then replace the package itself with the pinned upstream Nano commit.
           pip install --force-reinstall --no-deps $env:CHATTERBOX_SOURCE
@@ -106,6 +107,8 @@ jobs:
           print('Torch CUDA available in beta TTS runtime:', torch.cuda.is_available())
           if 'nano' not in sig.parameters:
               raise SystemExit('Installed Chatterbox source does not expose Nano support')
+          if torch.cuda.is_available():
+              raise SystemExit('Beta Chatterbox runtime unexpectedly contains a CUDA Torch build')
           '@ | python -
 
       - name: Pre-cache Whisper and Chatterbox Nano models
