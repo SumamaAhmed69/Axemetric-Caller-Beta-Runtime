@@ -15,13 +15,23 @@ This repository does **not** contain the private Axemetric Caller application so
 
 Testers do not need Git, GitHub Desktop, Python, PowerShell, or a GitHub account.
 
+## Pinned beta channel
+
+Axemetric Caller v20.4 beta uses the release tag `beta-v20.4.0`. The desktop application is pinned to that tag rather than `latest`, so a later release cannot silently change a tester's runtime.
+
 ## Runtime contents
 
-- Ollama Windows runtime
-- Qwen 3 4B model store
-- Portable Chatterbox Nano bridge with CUDA-capable PyTorch and CPU fallback
+- Official Ollama Windows runtime
+- Qwen 3 4B model store used locally through Ollama; Ollama can use a supported NVIDIA GPU automatically
+- Portable Chatterbox Nano bridge using the smaller CPU PyTorch runtime for broad Windows compatibility
 - Faster-Whisper `small.en` model cache
 
-Large runtime ZIPs are split into release parts so individual GitHub assets stay below GitHub's per-asset limit. Axemetric Caller reassembles them automatically.
+Large runtime ZIPs are split into release parts so individual GitHub assets stay below GitHub's per-asset limit. Axemetric Caller reassembles them automatically, verifies each part, verifies the complete reconstructed archive, and safely extracts it into the app's local runtime directory.
 
-This repository is a beta distribution endpoint only. Production releases use a separately controlled signed distribution channel.
+The downloader supports retries and resume attempts for interrupted large assets.
+
+## Security boundary
+
+This public repository is a binary distribution endpoint only. It contains no private application repository, SIP credentials, customer data, production signing private keys, or owner licensing secrets.
+
+The beta channel is deliberately separated from the production signed runtime channel. Production releases retain Ed25519 manifest verification in the private application code.
