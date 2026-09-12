@@ -27,6 +27,8 @@ jobs:
         run: |
           python -m py_compile benchmarks/dialforge_colab_benchmark.py
           python -m py_compile benchmarks/dialforge_colab_bootstrap.py
+          python -m py_compile benchmarks/dialforge_final_acceptance.py
+          python -m py_compile benchmarks/dialforge_final_colab_bootstrap.py
 
       - name: Validate notebook JSON
         run: |
@@ -34,6 +36,39 @@ jobs:
           python -m json.tool benchmarks/Dialforge_Cloud_Benchmark_v4.ipynb > /dev/null
           python -m json.tool benchmarks/Dialforge_Cloud_Benchmark_v5.ipynb > /dev/null
           python -m json.tool benchmarks/Dialforge_Cloud_Benchmark_v6.ipynb > /dev/null
+          python -m json.tool benchmarks/Dialforge_Final_Acceptance.ipynb > /dev/null
+
+      - name: Check final immutable launcher contract
+        run: |
+          grep -F "Dialforge Final Acceptance" benchmarks/Dialforge_Final_Acceptance.ipynb
+          grep -F "dialforge_final_colab_bootstrap.py" benchmarks/Dialforge_Final_Acceptance.ipynb
+          grep -F "DIALFORGE_SOURCE_SHA" benchmarks/Dialforge_Final_Acceptance.ipynb
+          grep -F "commits/main" benchmarks/Dialforge_Final_Acceptance.ipynb
+          grep -F "contents/{BOOTSTRAP_PATH}" benchmarks/Dialforge_Final_Acceptance.ipynb
+          grep -F "dialforge-final-acceptance-results.zip" benchmarks/Dialforge_Final_Acceptance.ipynb
+
+      - name: Check final acceptance benchmark contract
+        run: |
+          grep -F 'TARGET_MODEL = "qwen3:4b"' benchmarks/dialforge_final_acceptance.py
+          grep -F 'compute = "int8"' benchmarks/dialforge_final_acceptance.py
+          grep -F 'prepare_conditionals' benchmarks/dialforge_final_acceptance.py
+          grep -F '"think": False' benchmarks/dialforge_final_acceptance.py
+          grep -F 'voice_start_ms' benchmarks/dialforge_final_acceptance.py
+          grep -F 'guard_regressions' benchmarks/dialforge_final_acceptance.py
+          grep -F 'PHENOMENAL' benchmarks/dialforge_final_acceptance.py
+          grep -F 'LiveKit/SIP/PSTN' benchmarks/dialforge_final_acceptance.py
+
+      - name: Check final bootstrap safeguards
+        run: |
+          grep -F "DIALFORGE FINAL COLAB ACCEPTANCE BOOTSTRAP v1" benchmarks/dialforge_final_colab_bootstrap.py
+          grep -F "dialforge-final-py311-v1" benchmarks/dialforge_final_colab_bootstrap.py
+          grep -F "numpy==1.26.4" benchmarks/dialforge_final_colab_bootstrap.py
+          grep -F "OLLAMA_KEEP_ALIVE" benchmarks/dialforge_final_colab_bootstrap.py
+          grep -F "OLLAMA_FLASH_ATTENTION" benchmarks/dialforge_final_colab_bootstrap.py
+          grep -F "dialforge_final_acceptance.py" benchmarks/dialforge_final_colab_bootstrap.py
+          grep -F "DIALFORGE_SOURCE_SHA" benchmarks/dialforge_final_colab_bootstrap.py
+          grep -F "ollama-linux-amd64.tar.zst" benchmarks/dialforge_final_colab_bootstrap.py
+          grep -F -- '"-C", "-"' benchmarks/dialforge_final_colab_bootstrap.py
 
       - name: Check v6 Python 3.11 commit-pinned launcher
         run: |
