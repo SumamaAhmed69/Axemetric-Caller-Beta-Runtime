@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/publish-qwen-tiers.yml"
+      - "runtime/build_qwen_tier.ps1"
 
 permissions:
   contents: write
@@ -129,8 +130,6 @@ jobs:
           gh release upload $env:RELEASE_TAG release-assets/manifest.json --clobber
           if ($LASTEXITCODE -ne 0) { throw 'Could not upload profile-aware runtime manifest' }
 
-          # Old beta.1 4B parts are no longer referenced by the manifest. Remove
-          # them only after the new manifest is safely published.
           foreach ($asset in @('qwen-model.zip.part001','qwen-model.zip.part002')) {
             gh release delete-asset $env:RELEASE_TAG $asset --yes 2>$null
           }
