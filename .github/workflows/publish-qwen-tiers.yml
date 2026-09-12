@@ -2,11 +2,6 @@ name: Publish Qwen Runtime Tiers
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/publish-qwen-tiers.yml"
-      - "runtime/build_qwen_tier.ps1"
 
 permissions:
   contents: write
@@ -151,7 +146,7 @@ jobs:
           foreach ($profile in $expected.Keys) {
             $pkg = $qwen | Where-Object { $_.profiles -contains $profile }
             if (-not $pkg) { throw "Missing Qwen package for $profile" }
-            if ($pkg.model -ne $expected[$profile]) { throw "Wrong model for $profile: $($pkg.model)" }
+            if ($pkg.model -ne $expected[$profile]) { throw ("Wrong model for {0}: {1}" -f $profile, $pkg.model) }
             if (-not $pkg.parts -or $pkg.parts.Count -lt 1) { throw "No release parts for $profile" }
           }
           Write-Host 'All three Qwen runtime tiers are published and referenced by the manifest.'
