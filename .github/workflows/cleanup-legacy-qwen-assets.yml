@@ -1,0 +1,53 @@
+name: Cleanup Legacy Qwen Assets
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/cleanup-legacy-qwen-assets.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove obsolete Qwen assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: beta-v20.4.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          obsolete=(
+            qwen-model.zip.part001
+            qwen-model.zip.part002
+            qwen-model-compatibility.zip.001
+            qwen-model-balanced.zip.001
+            qwen-model-balanced.zip.002
+            qwen-model-performance.zip.001
+            qwen-model-performance.zip.002
+            qwen-model-performance.zip.003
+          )
+          for asset in "${obsolete[@]}"; do
+            if gh release delete-asset "$RELEASE_TAG" "$asset" --repo SumamaAhmed69/Axemetric-Caller-Beta-Runtime --yes 2>/dev/null; then
+              echo "Removed obsolete asset: $asset"
+            else
+              echo "Already absent: $asset"
+            fi
+          done
+
+          names=$(gh api repos/SumamaAhmed69/Axemetric-Caller-Beta-Runtime/releases/tags/$RELEASE_TAG --jq '.assets[].name')
+          for required in \
+            manifest.json \
+            qwen-model-compatibility.zip.part001 \
+            qwen-model-balanced.zip.part001 \
+            qwen-model-balanced.zip.part002 \
+            qwen-model-performance.zip.part001 \
+            qwen-model-performance.zip.part002 \
+            qwen-model-performance.zip.part003; do
+            echo "$names" | grep -Fx "$required" >/dev/null || { echo "Required asset missing: $required"; exit 1; }
+          done
+          echo "Legacy Qwen assets cleaned without touching the profile-aware runtime files."
