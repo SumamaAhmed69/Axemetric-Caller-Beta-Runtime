@@ -120,16 +120,20 @@ def refresh_voice(m: ChatterboxTurboTTS) -> None:
 
 def _status() -> dict:
     state = marker()
+    try:
+        current_revision = int(state.get("revision", 0) or 0)
+    except Exception:
+        current_revision = 0
     return {
         "ok": True,
         "device": DEVICE,
         "nano": NANO,
         "loaded": _model is not None,
         "load_ms": _load_ms,
-        "voice_revision": state.get("revision", 0),
+        "voice_revision": current_revision,
         "voice_configured": bool(state.get("configured")),
         "voice_file_present": REFERENCE.exists(),
-        "voice_prepared": _loaded_revision == int(state.get("revision", 0) or 0) if _model is not None else False,
+        "voice_prepared": _model is not None and _loaded_revision == current_revision,
     }
 
 
