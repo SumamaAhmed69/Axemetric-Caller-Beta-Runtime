@@ -13,7 +13,7 @@ permissions:
 
 concurrency:
   group: axemetric-qwen-runtime-tiers
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   RELEASE_TAG: "beta-v20.4.0"
