@@ -33,7 +33,7 @@ jobs:
           grep -F "dialforge_colab_bootstrap.py" benchmarks/Dialforge_Cloud_Benchmark.ipynb
           grep -F -- "--pipeline-models" benchmarks/dialforge_colab_bootstrap.py
           grep -F "ollama-linux-amd64.tar.zst" benchmarks/dialforge_colab_bootstrap.py
-          grep -F "-C" benchmarks/dialforge_colab_bootstrap.py
+          grep -F -- '"-C"' benchmarks/dialforge_colab_bootstrap.py
           grep -F "dialforge-benchmark-venv-v3" benchmarks/dialforge_colab_bootstrap.py
       - name: Test exact resumable Ollama bootstrap path
         run: sudo python benchmarks/dialforge_colab_bootstrap.py --install-ollama-only --no-require-cuda
