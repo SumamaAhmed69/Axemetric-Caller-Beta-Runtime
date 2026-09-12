@@ -30,13 +30,19 @@ jobs:
         run: |
           python -m json.tool benchmarks/Dialforge_Cloud_Benchmark.ipynb > /dev/null
           python -m json.tool benchmarks/Dialforge_Cloud_Benchmark_v4.ipynb > /dev/null
-      - name: Check v4 launcher and resilient bootstrap
+          python -m json.tool benchmarks/Dialforge_Cloud_Benchmark_v5.ipynb > /dev/null
+      - name: Check v5 commit-pinned launcher
         run: |
-          grep -F "v4-live-log" benchmarks/Dialforge_Cloud_Benchmark_v4.ipynb
-          grep -F "dialforge-bootstrap.log" benchmarks/Dialforge_Cloud_Benchmark_v4.ipynb
-          grep -F "subprocess.Popen" benchmarks/Dialforge_Cloud_Benchmark_v4.ipynb
-          grep -F "stderr=subprocess.STDOUT" benchmarks/Dialforge_Cloud_Benchmark_v4.ipynb
-          grep -F "dialforge_colab_bootstrap.py" benchmarks/Dialforge_Cloud_Benchmark_v4.ipynb
+          grep -F "v5-commit-api" benchmarks/Dialforge_Cloud_Benchmark_v5.ipynb
+          grep -F "api.github.com/repos" benchmarks/Dialforge_Cloud_Benchmark_v5.ipynb
+          grep -F "commits/main" benchmarks/Dialforge_Cloud_Benchmark_v5.ipynb
+          grep -F "contents/{BOOTSTRAP_PATH}" benchmarks/Dialforge_Cloud_Benchmark_v5.ipynb
+          grep -F "bootstrap v4" benchmarks/Dialforge_Cloud_Benchmark_v5.ipynb
+          grep -F "dialforge-benchmark-venv-v4" benchmarks/Dialforge_Cloud_Benchmark_v5.ipynb
+          grep -F "Refusing stale bootstrap" benchmarks/Dialforge_Cloud_Benchmark_v5.ipynb
+          grep -F "stderr=subprocess.STDOUT" benchmarks/Dialforge_Cloud_Benchmark_v5.ipynb
+      - name: Check resilient bootstrap
+        run: |
           grep -F -- "--pipeline-models" benchmarks/dialforge_colab_bootstrap.py
           grep -F "ollama-linux-amd64.tar.zst" benchmarks/dialforge_colab_bootstrap.py
           grep -F -- '"-C"' benchmarks/dialforge_colab_bootstrap.py
