@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Resilient one-click bootstrap for the Dialforge Google Colab benchmark.
 
-This script intentionally keeps setup outside the notebook so the exact same path can be
-validated in CI. It installs Ollama using a resumable official archive download, creates an
-isolated venv for the speech stack, validates each component separately, starts Ollama,
-and then runs the public benchmark runner.
+This script keeps setup outside the notebook so the exact same path can be validated in CI.
+It installs Ollama using a resumable official archive download, creates an isolated Python
+environment for the speech stack, validates each component separately, starts Ollama, and
+then runs the public benchmark runner.
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ import time
 import urllib.request
 
 ROOT = pathlib.Path("/content") if pathlib.Path("/content").exists() else pathlib.Path.cwd()
-VENV = ROOT / "dialforge-benchmark-venv-v3"
+VENV = ROOT / "dialforge-benchmark-venv-v4"
 OLLAMA_ARCHIVE = ROOT / "ollama-linux-amd64.tar.zst"
 OLLAMA_URL = "https://ollama.com/download/ollama-linux-amd64.tar.zst"
 OLLAMA_LOG = ROOT / "ollama.log"
@@ -62,9 +62,13 @@ def run(cmd, *, shell=False, check=True, capture=False, env=None):
 
 def apt_setup():
     run(["apt-get", "update", "-qq"])
+    # python3-virtualenv is intentional: Colab/Debian can have a broken stdlib
+    # ensurepip path even when python3-venv is installed. virtualenv carries its own
+    # seed wheels and avoids that failure mode.
     run([
         "apt-get", "install", "-y", "-qq",
-        "pciutils", "curl", "ca-certificates", "git", "zstd", "python3-venv",
+        "pciutils", "curl", "ca-certificates", "git", "zstd",
+        "python3-venv", "python3-virtualenv",
     ])
 
 
@@ -113,7 +117,6 @@ def download_with_resume(url: str, destination: pathlib.Path, attempts: int = 12
             print("Download completed but archive integrity failed; restarting archive.", flush=True)
             destination.unlink(missing_ok=True)
         elif result.returncode in {33, 36}:
-            # Server/proxy refused range requests. Start a clean file next try.
             print("Resume was refused by the server/proxy; restarting from byte 0.", flush=True)
             destination.unlink(missing_ok=True)
         time.sleep(min(3 * attempt, 15))
@@ -125,7 +128,6 @@ def install_ollama():
         return
     print("\nInstalling Ollama from its official Linux archive with resume support...", flush=True)
     download_with_resume(OLLAMA_URL, OLLAMA_ARCHIVE)
-    # Official Ollama Linux manual install extracts this archive at /usr.
     run(["tar", "--zstd", "-xf", str(OLLAMA_ARCHIVE), "-C", "/usr"])
     if not ollama_works():
         raise RuntimeError("Ollama archive extracted, but the CLI still does not run.")
@@ -137,24 +139,75 @@ def venv_python():
     return VENV / "bin" / "python"
 
 
+def venv_is_healthy(python: pathlib.Path):
+    if not python.exists():
+        return False
+    result = subprocess.run(
+        [str(python), "-m", "pip", "--version"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    if result.returncode == 0:
+        print(f"Isolated Python environment ready: {result.stdout.strip()}", flush=True)
+        return True
+    print("Existing isolated environment is incomplete and will be rebuilt.", flush=True)
+    if result.stdout:
+        print(result.stdout[-4000:], flush=True)
+    return False
+
+
 def ensure_venv():
     python = venv_python()
-    if not python.exists():
-        print(f"\nCreating isolated Python environment at {VENV}", flush=True)
-        run([sys.executable, "-m", "venv", str(VENV)])
+    if venv_is_healthy(python):
+        return python
+
+    if VENV.exists():
+        print(f"Removing incomplete environment: {VENV}", flush=True)
+        shutil.rmtree(VENV, ignore_errors=True)
+
+    print(f"\nCreating isolated Python environment with virtualenv at {VENV}", flush=True)
+    creator = shutil.which("virtualenv")
+    if creator:
+        result = run(
+            [creator, "--python", sys.executable, str(VENV)],
+            check=False,
+            capture=True,
+        )
+    else:
+        # Fallback if the distro exposes virtualenv only as a Python module.
+        result = run(
+            [sys.executable, "-m", "virtualenv", "--python", sys.executable, str(VENV)],
+            check=False,
+            capture=True,
+        )
+
+    if result.returncode != 0 or not venv_is_healthy(python):
+        # Last-resort bootstrap from pip. This still avoids stdlib ensurepip.
+        print("Distro virtualenv creation failed. Installing a pinned virtualenv wheel and retrying...", flush=True)
+        shutil.rmtree(VENV, ignore_errors=True)
+        install = run(
+            [sys.executable, "-m", "pip", "install", "--no-cache-dir", "virtualenv==20.35.4"],
+            check=False,
+            capture=True,
+        )
+        if install.returncode != 0:
+            raise RuntimeError("Could not install virtualenv after stdlib venv/ensurepip failure.")
+        run(
+            [sys.executable, "-m", "virtualenv", "--clear", "--python", sys.executable, str(VENV)],
+            capture=True,
+        )
+
+    if not venv_is_healthy(python):
+        raise RuntimeError("Isolated Python environment was created but pip is not functional.")
     return python
-
-
-def pip_install(python: pathlib.Path, *args):
-    return run([str(python), "-m", "pip", "install", *args])
 
 
 def setup_python_stack(python: pathlib.Path):
     env = os.environ.copy()
     env["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
     run([str(python), "-m", "pip", "install", "--upgrade", "pip", "wheel", "setuptools"], env=env)
-    # Chatterbox 0.1.7 pins torch/torchaudio 2.6.0. CUDA 12.4 wheels work with the T4
-    # and avoid contaminating Colab's preinstalled Python environment.
+    # Chatterbox 0.1.7 pins torch/torchaudio 2.6.0. CUDA 12.4 wheels work with T4.
     run([
         str(python), "-m", "pip", "install",
         "torch==2.6.0", "torchaudio==2.6.0",
@@ -165,7 +218,6 @@ def setup_python_stack(python: pathlib.Path):
         "psutil==7.0.0", "requests==2.32.5", "numpy<2",
         "faster-whisper==1.2.0", "chatterbox-tts==0.1.7",
     ], env=env)
-    # Match the exact source revisions shipped by Dialforge beta.5.
     run([
         str(python), "-m", "pip", "install", "--force-reinstall", "--no-deps",
         "git+https://github.com/resemble-ai/Perth.git@ff1c8ac55a976971245cdd53c18d6131ca00d993",
@@ -246,14 +298,19 @@ def download_runner():
     print("\nDownloading current Dialforge benchmark runner...", flush=True)
     for attempt in range(1, 6):
         try:
-            request = urllib.request.Request(RUNNER_URL, headers={"User-Agent": "Dialforge-Benchmark"})
+            request = urllib.request.Request(
+                RUNNER_URL + f"?v={time.time_ns()}",
+                headers={"User-Agent": "Dialforge-Benchmark", "Cache-Control": "no-cache"},
+            )
             with urllib.request.urlopen(request, timeout=60) as response:
-                RUNNER.write_bytes(response.read())
-            if RUNNER.stat().st_size > 1000:
+                payload = response.read()
+            if len(payload) > 1000:
+                compile(payload.decode("utf-8"), str(RUNNER), "exec")
+                RUNNER.write_bytes(payload)
                 print(f"Runner downloaded: {RUNNER} ({RUNNER.stat().st_size} bytes)", flush=True)
                 return
         except Exception as exc:
-            print(f"Runner download attempt {attempt} failed: {exc}", flush=True)
+            print(f"Runner download attempt {attempt} failed: {type(exc).__name__}: {exc}", flush=True)
         time.sleep(2 * attempt)
     raise RuntimeError("Could not download the Dialforge benchmark runner from GitHub.")
 
@@ -280,16 +337,23 @@ def run_benchmark(python: pathlib.Path):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--install-ollama-only", action="store_true")
+    parser.add_argument("--test-venv-only", action="store_true")
     parser.add_argument("--no-require-cuda", action="store_true")
     args = parser.parse_args()
 
-    print("=== Dialforge Cloud Benchmark bootstrap v3 ===", flush=True)
+    print("=== Dialforge Cloud Benchmark bootstrap v4 ===", flush=True)
     if not args.no_require_cuda:
         if not shutil.which("nvidia-smi"):
             raise RuntimeError("No NVIDIA GPU detected. In Colab select Runtime > Change runtime type > T4 GPU.")
         run(["nvidia-smi"])
 
     apt_setup()
+
+    if args.test_venv_only:
+        python = ensure_venv()
+        print(f"virtualenv test passed: {python}", flush=True)
+        return 0
+
     install_ollama()
     if args.install_ollama_only:
         print("Ollama installation test passed.", flush=True)
