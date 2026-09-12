@@ -22,23 +22,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Compile benchmark runner
-        run: python -m py_compile benchmarks/dialforge_colab_benchmark.py
+      - name: Compile benchmark Python files
+        run: |
+          python -m py_compile benchmarks/dialforge_colab_benchmark.py
+          python -m py_compile benchmarks/dialforge_colab_bootstrap.py
       - name: Validate notebook JSON
         run: python -m json.tool benchmarks/Dialforge_Cloud_Benchmark.ipynb > /dev/null
-      - name: Check notebook configuration
+      - name: Check notebook uses resilient bootstrap
         run: |
-          grep -F "dialforge_colab_benchmark.py" benchmarks/Dialforge_Cloud_Benchmark.ipynb
-          grep -F "'zstd'" benchmarks/Dialforge_Cloud_Benchmark.ipynb
-          grep -F -- "--pipeline-models" benchmarks/Dialforge_Cloud_Benchmark.ipynb
-          if grep -Fq "ollama-linux-amd64.tgz" benchmarks/Dialforge_Cloud_Benchmark.ipynb; then
-            echo "Dead Ollama tarball fallback must not return"
-            exit 1
-          fi
-      - name: Verify current Ollama Linux install path
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq curl ca-certificates zstd
-          curl --retry 5 --retry-delay 2 --retry-connrefused -fsSL https://ollama.com/install.sh | sh
-          command -v ollama
-          ollama --version
+          grep -F "dialforge_colab_bootstrap.py" benchmarks/Dialforge_Cloud_Benchmark.ipynb
+          grep -F -- "--pipeline-models" benchmarks/dialforge_colab_bootstrap.py
+          grep -F "ollama-linux-amd64.tar.zst" benchmarks/dialforge_colab_bootstrap.py
+          grep -F "-C" benchmarks/dialforge_colab_bootstrap.py
+          grep -F "dialforge-benchmark-venv-v3" benchmarks/dialforge_colab_bootstrap.py
+      - name: Test exact resumable Ollama bootstrap path
+        run: sudo python benchmarks/dialforge_colab_bootstrap.py --install-ollama-only --no-require-cuda
