@@ -30,7 +30,7 @@ jobs:
         run: |
           grep -F "dialforge_colab_benchmark.py" benchmarks/Dialforge_Cloud_Benchmark.ipynb
           grep -F "'zstd'" benchmarks/Dialforge_Cloud_Benchmark.ipynb
-          grep -F "--pipeline-models" benchmarks/Dialforge_Cloud_Benchmark.ipynb
+          grep -F -- "--pipeline-models" benchmarks/Dialforge_Cloud_Benchmark.ipynb
           if grep -Fq "ollama-linux-amd64.tgz" benchmarks/Dialforge_Cloud_Benchmark.ipynb; then
             echo "Dead Ollama tarball fallback must not return"
             exit 1
