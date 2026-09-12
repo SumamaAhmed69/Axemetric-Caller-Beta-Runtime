@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import io
 import json
 import os
@@ -29,6 +31,7 @@ def data_root() -> Path:
 
 
 MARKER = data_root() / "runtime" / "voice-reference.json"
+REFERENCE = data_root() / "voices" / "reference.wav"
 app = FastAPI(title="Axemetric Chatterbox", docs_url=None, redoc_url=None)
 _lock = RLock()
 _model: ChatterboxTurboTTS | None = None
@@ -53,31 +56,76 @@ def model() -> ChatterboxTurboTTS:
 
 def marker() -> dict:
     if not MARKER.exists():
-        return {"revision": 0, "path": None}
+        return {"configured": False, "revision": 0, "sha256": None}
     try:
-        return json.loads(MARKER.read_text("utf-8"))
+        value = json.loads(MARKER.read_text("utf-8"))
+        return value if isinstance(value, dict) else {"configured": False, "revision": 0, "sha256": None}
     except Exception:
-        return {"revision": 0, "path": None}
+        return {"configured": False, "revision": 0, "sha256": None, "error": "invalid marker"}
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _clear_conditionals(m: ChatterboxTurboTTS) -> None:
+    try:
+        m.conds = None
+    except Exception:
+        pass
 
 
 def refresh_voice(m: ChatterboxTurboTTS) -> None:
     global _loaded_revision
     state = marker()
-    revision = int(state.get("revision", 0))
+    try:
+        revision = int(state.get("revision", 0))
+    except Exception:
+        revision = 0
     if revision == _loaded_revision:
         return
-    ref = state.get("path")
-    if ref and Path(ref).exists():
-        m.prepare_conditionals(str(ref), exaggeration=0.0, norm_loudness=True)
+
+    if not state.get("configured"):
+        _clear_conditionals(m)
         _loaded_revision = revision
-    elif _loaded_revision < 0:
-        _loaded_revision = revision
+        return
+
+    expected = str(state.get("sha256") or "").strip().lower()
+    if not expected:
+        _clear_conditionals(m)
+        raise RuntimeError("Voice reference metadata is incomplete. Upload the reference again.")
+    if not REFERENCE.exists() or not REFERENCE.is_file():
+        _clear_conditionals(m)
+        raise RuntimeError("Voice reference file is missing. Upload the reference again.")
+    actual = _sha256(REFERENCE).lower()
+    if not hmac.compare_digest(actual, expected):
+        _clear_conditionals(m)
+        raise RuntimeError("Voice reference integrity check failed. Upload the reference again.")
+
+    try:
+        m.prepare_conditionals(str(REFERENCE), exaggeration=0.0, norm_loudness=True)
+    except Exception as exc:
+        _clear_conditionals(m)
+        raise RuntimeError("Voice reference could not be prepared by Chatterbox.") from exc
+    _loaded_revision = revision
 
 
 @app.get("/health")
 def health():
     state = marker()
-    return {"ok": True, "device": DEVICE, "nano": NANO, "loaded": _model is not None, "voice_revision": state.get("revision", 0)}
+    return {
+        "ok": True,
+        "device": DEVICE,
+        "nano": NANO,
+        "loaded": _model is not None,
+        "voice_revision": state.get("revision", 0),
+        "voice_configured": bool(state.get("configured")),
+        "voice_file_present": REFERENCE.exists(),
+    }
 
 
 @app.get("/v1/models")
@@ -94,9 +142,11 @@ def speech(req: SpeechRequest):
         raise HTTPException(400, "input is too long")
     m = model()
     with _lock:
-        refresh_voice(m)
         try:
+            refresh_voice(m)
             wav = m.generate(text, exaggeration=0.0, cfg_weight=0.0, temperature=0.8, norm_loudness=True)
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
         except AssertionError as exc:
             raise HTTPException(409, "Choose a voice reference before synthesizing speech") from exc
         buffer = io.BytesIO()

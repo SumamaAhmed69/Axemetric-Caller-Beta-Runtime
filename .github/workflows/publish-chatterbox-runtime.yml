@@ -1,0 +1,117 @@
+name: Publish Hardened Chatterbox Runtime
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "runtime/chatterbox_bridge.py"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: chatterbox-runtime-publish
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: beta-v20.4.0
+  CHATTERBOX_SOURCE: git+https://github.com/resemble-ai/chatterbox.git@5de7a54aa4e5e2baadb0182dde554908b48b85c2
+  PERTH_SOURCE: git+https://github.com/resemble-ai/Perth.git@ff1c8ac55a976971245cdd53c18d6131ca00d993
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build portable Chatterbox runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m pip install --upgrade pip wheel setuptools
+          pip install pyinstaller fastapi uvicorn pydantic huggingface_hub
+          pip install torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cpu
+          pip install chatterbox-tts
+          pip install --force-reinstall --no-deps $env:PERTH_SOURCE
+          pip install --force-reinstall --no-deps $env:CHATTERBOX_SOURCE
+          @'
+          import inspect
+          import perth
+          from chatterbox.tts_turbo import ChatterboxTurboTTS
+          sig = inspect.signature(ChatterboxTurboTTS.from_pretrained)
+          if 'nano' not in sig.parameters:
+              raise SystemExit('Pinned Chatterbox source does not expose Nano support')
+          if perth.PerthImplicitWatermarker is None:
+              raise SystemExit('Perth watermark support unavailable')
+          print('Chatterbox Nano and Perth watermark support verified.')
+          '@ | python -
+          python -m PyInstaller --noconfirm --clean --onedir --noconsole --name chatterbox-server --distpath dist --workpath work --specpath spec --collect-all chatterbox --collect-all perth --collect-all torch --collect-all torchaudio runtime/chatterbox_bridge.py
+          if (-not (Test-Path 'dist/chatterbox-server/chatterbox-server.exe')) { throw 'Chatterbox executable missing' }
+
+      - name: Package runtime and patch manifest
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force release-assets, manifest-work | Out-Null
+          Compress-Archive -Path 'dist/chatterbox-server/*' -DestinationPath 'manifest-work/chatterbox.zip' -CompressionLevel Optimal -Force
+          Move-Item 'manifest-work/chatterbox.zip' 'release-assets/chatterbox.zip.part001' -Force
+          gh release download $env:RELEASE_TAG --pattern manifest.json --dir manifest-work --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Could not download live runtime manifest' }
+          $asset = Get-Item 'release-assets/chatterbox.zip.part001'
+          $digest = (Get-FileHash $asset.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $size = $asset.Length
+          $url = "https://github.com/${{ github.repository }}/releases/download/$env:RELEASE_TAG/chatterbox.zip.part001"
+          @"
+          import json
+          from datetime import datetime, timezone
+          from pathlib import Path
+          p = Path('manifest-work/manifest.json')
+          doc = json.loads(p.read_text(encoding='utf-8-sig'))
+          packages = [x for x in doc.get('packages', []) if x.get('name') == 'chatterbox']
+          if len(packages) != 1:
+              raise SystemExit(f'Expected one chatterbox package, found {len(packages)}')
+          pkg = packages[0]
+          pkg.pop('file', None)
+          pkg.pop('url', None)
+          pkg['sha256'] = '$digest'
+          pkg['size'] = $size
+          pkg['parts'] = [{
+              'file': 'chatterbox.zip.part001',
+              'url': '$url',
+              'sha256': '$digest',
+              'size': $size,
+          }]
+          doc['generated_at'] = datetime.now(timezone.utc).isoformat()
+          Path('release-assets/manifest.json').write_text(json.dumps(doc, indent=2), encoding='utf-8')
+          print('Patched chatterbox package while preserving', len([x for x in doc.get('packages', []) if x.get('name') == 'qwen-model']), 'Qwen tiers')
+          "@ | python -
+
+      - name: Publish and verify runtime assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release upload $env:RELEASE_TAG release-assets/chatterbox.zip.part001 --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Chatterbox upload failed' }
+          gh release upload $env:RELEASE_TAG release-assets/manifest.json --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Manifest upload failed' }
+
+          $release = gh api "repos/${{ github.repository }}/releases/tags/$env:RELEASE_TAG" | ConvertFrom-Json
+          $manifest = Get-Content release-assets/manifest.json -Raw | ConvertFrom-Json
+          $pkg = @($manifest.packages | Where-Object { $_.name -eq 'chatterbox' })[0]
+          $published = @($release.assets | Where-Object { $_.name -eq 'chatterbox.zip.part001' })[0]
+          if (-not $published) { throw 'Published chatterbox asset is missing' }
+          if ([int64]$published.size -ne [int64]$pkg.parts[0].size) { throw 'Published chatterbox size mismatch' }
+          if ($published.digest -and $published.digest -ne "sha256:$($pkg.parts[0].sha256)") { throw 'Published chatterbox digest mismatch' }
+          $qwen = @($manifest.packages | Where-Object { $_.name -eq 'qwen-model' })
+          if ($qwen.Count -ne 3) { throw "Qwen tier manifest was damaged; expected 3, found $($qwen.Count)" }
+          Write-Host 'Hardened Chatterbox runtime published and manifest verified.'
