@@ -127,7 +127,11 @@ jobs:
 
           foreach ($asset in @('qwen-model.zip.part001','qwen-model.zip.part002')) {
             gh release delete-asset $env:RELEASE_TAG $asset --yes 2>$null
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "Legacy asset already absent: $asset"
+            }
           }
+          $global:LASTEXITCODE = 0
 
       - name: Verify published tier manifest
         shell: pwsh
