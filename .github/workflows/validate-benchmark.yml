@@ -27,10 +27,16 @@ jobs:
           python -m py_compile benchmarks/dialforge_colab_benchmark.py
           python -m py_compile benchmarks/dialforge_colab_bootstrap.py
       - name: Validate notebook JSON
-        run: python -m json.tool benchmarks/Dialforge_Cloud_Benchmark.ipynb > /dev/null
-      - name: Check notebook uses resilient bootstrap
         run: |
-          grep -F "dialforge_colab_bootstrap.py" benchmarks/Dialforge_Cloud_Benchmark.ipynb
+          python -m json.tool benchmarks/Dialforge_Cloud_Benchmark.ipynb > /dev/null
+          python -m json.tool benchmarks/Dialforge_Cloud_Benchmark_v4.ipynb > /dev/null
+      - name: Check v4 launcher and resilient bootstrap
+        run: |
+          grep -F "v4-live-log" benchmarks/Dialforge_Cloud_Benchmark_v4.ipynb
+          grep -F "dialforge-bootstrap.log" benchmarks/Dialforge_Cloud_Benchmark_v4.ipynb
+          grep -F "subprocess.Popen" benchmarks/Dialforge_Cloud_Benchmark_v4.ipynb
+          grep -F "stderr=subprocess.STDOUT" benchmarks/Dialforge_Cloud_Benchmark_v4.ipynb
+          grep -F "dialforge_colab_bootstrap.py" benchmarks/Dialforge_Cloud_Benchmark_v4.ipynb
           grep -F -- "--pipeline-models" benchmarks/dialforge_colab_bootstrap.py
           grep -F "ollama-linux-amd64.tar.zst" benchmarks/dialforge_colab_bootstrap.py
           grep -F -- '"-C"' benchmarks/dialforge_colab_bootstrap.py
