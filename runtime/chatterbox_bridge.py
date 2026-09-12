@@ -5,6 +5,7 @@ import hmac
 import io
 import json
 import os
+import time
 from pathlib import Path
 from threading import RLock
 
@@ -32,10 +33,11 @@ def data_root() -> Path:
 
 MARKER = data_root() / "runtime" / "voice-reference.json"
 REFERENCE = data_root() / "voices" / "reference.wav"
-app = FastAPI(title="Axemetric Chatterbox", docs_url=None, redoc_url=None)
+app = FastAPI(title="Dialforge Chatterbox", docs_url=None, redoc_url=None)
 _lock = RLock()
 _model: ChatterboxTurboTTS | None = None
 _loaded_revision = -1
+_load_ms: float | None = None
 
 
 class SpeechRequest(BaseModel):
@@ -47,10 +49,12 @@ class SpeechRequest(BaseModel):
 
 
 def model() -> ChatterboxTurboTTS:
-    global _model
+    global _model, _load_ms
     with _lock:
         if _model is None:
+            started = time.perf_counter()
             _model = ChatterboxTurboTTS.from_pretrained(device=DEVICE, nano=NANO)
+            _load_ms = round((time.perf_counter() - started) * 1000.0, 1)
         return _model
 
 
@@ -114,23 +118,44 @@ def refresh_voice(m: ChatterboxTurboTTS) -> None:
     _loaded_revision = revision
 
 
-@app.get("/health")
-def health():
+def _status() -> dict:
     state = marker()
     return {
         "ok": True,
         "device": DEVICE,
         "nano": NANO,
         "loaded": _model is not None,
+        "load_ms": _load_ms,
         "voice_revision": state.get("revision", 0),
         "voice_configured": bool(state.get("configured")),
         "voice_file_present": REFERENCE.exists(),
+        "voice_prepared": _loaded_revision == int(state.get("revision", 0) or 0) if _model is not None else False,
     }
+
+
+@app.get("/health")
+def health():
+    return _status()
+
+
+@app.post("/warmup")
+def warmup():
+    """Load Chatterbox and prepare the selected voice before dialing anyone."""
+    m = model()
+    with _lock:
+        try:
+            refresh_voice(m)
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+    return _status()
 
 
 @app.get("/v1/models")
 def models():
-    return {"object": "list", "data": [{"id": "chatterbox", "object": "model", "owned_by": "axemetric-local"}]}
+    return {
+        "object": "list",
+        "data": [{"id": "chatterbox", "object": "model", "owned_by": "dialforge-local"}],
+    }
 
 
 @app.post("/v1/audio/speech")
@@ -144,7 +169,13 @@ def speech(req: SpeechRequest):
     with _lock:
         try:
             refresh_voice(m)
-            wav = m.generate(text, exaggeration=0.0, cfg_weight=0.0, temperature=0.8, norm_loudness=True)
+            wav = m.generate(
+                text,
+                exaggeration=0.0,
+                cfg_weight=0.0,
+                temperature=0.8,
+                norm_loudness=True,
+            )
         except RuntimeError as exc:
             raise HTTPException(409, str(exc)) from exc
         except AssertionError as exc:
