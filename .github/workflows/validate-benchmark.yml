@@ -1,0 +1,30 @@
+name: Validate Dialforge Benchmark
+
+on:
+  push:
+    paths:
+      - "benchmarks/**"
+      - ".github/workflows/validate-benchmark.yml"
+  pull_request:
+    paths:
+      - "benchmarks/**"
+      - ".github/workflows/validate-benchmark.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile benchmark runner
+        run: python -m py_compile benchmarks/dialforge_colab_benchmark.py
+      - name: Validate notebook JSON
+        run: python -m json.tool benchmarks/Dialforge_Cloud_Benchmark.ipynb > /dev/null
+      - name: Check notebook references the public runner
+        run: grep -F "dialforge_colab_benchmark.py" benchmarks/Dialforge_Cloud_Benchmark.ipynb
