@@ -22,34 +22,43 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
       - name: Compile benchmark Python files
         run: |
           python -m py_compile benchmarks/dialforge_colab_benchmark.py
           python -m py_compile benchmarks/dialforge_colab_bootstrap.py
+
       - name: Validate notebook JSON
         run: |
           python -m json.tool benchmarks/Dialforge_Cloud_Benchmark.ipynb > /dev/null
           python -m json.tool benchmarks/Dialforge_Cloud_Benchmark_v4.ipynb > /dev/null
           python -m json.tool benchmarks/Dialforge_Cloud_Benchmark_v5.ipynb > /dev/null
-      - name: Check v5 commit-pinned launcher
+          python -m json.tool benchmarks/Dialforge_Cloud_Benchmark_v6.ipynb > /dev/null
+
+      - name: Check v6 Python 3.11 commit-pinned launcher
         run: |
-          grep -F "v5-commit-api" benchmarks/Dialforge_Cloud_Benchmark_v5.ipynb
-          grep -F "api.github.com/repos" benchmarks/Dialforge_Cloud_Benchmark_v5.ipynb
-          grep -F "commits/main" benchmarks/Dialforge_Cloud_Benchmark_v5.ipynb
-          grep -F "contents/{BOOTSTRAP_PATH}" benchmarks/Dialforge_Cloud_Benchmark_v5.ipynb
-          grep -F "bootstrap v4" benchmarks/Dialforge_Cloud_Benchmark_v5.ipynb
-          grep -F "dialforge-benchmark-venv-v4" benchmarks/Dialforge_Cloud_Benchmark_v5.ipynb
-          grep -F "Refusing stale bootstrap" benchmarks/Dialforge_Cloud_Benchmark_v5.ipynb
-          grep -F "stderr=subprocess.STDOUT" benchmarks/Dialforge_Cloud_Benchmark_v5.ipynb
-      - name: Check resilient bootstrap
+          grep -F "v6-py311-commit-pinned" benchmarks/Dialforge_Cloud_Benchmark_v6.ipynb
+          grep -F "api.github.com/repos" benchmarks/Dialforge_Cloud_Benchmark_v6.ipynb
+          grep -F "commits/main" benchmarks/Dialforge_Cloud_Benchmark_v6.ipynb
+          grep -F "contents/{BOOTSTRAP_PATH}" benchmarks/Dialforge_Cloud_Benchmark_v6.ipynb
+          grep -F "bootstrap v5-py311" benchmarks/Dialforge_Cloud_Benchmark_v6.ipynb
+          grep -F "dialforge-benchmark-py311-v5" benchmarks/Dialforge_Cloud_Benchmark_v6.ipynb
+          grep -F "DIALFORGE_SOURCE_SHA" benchmarks/Dialforge_Cloud_Benchmark_v6.ipynb
+          grep -F "stderr=subprocess.STDOUT" benchmarks/Dialforge_Cloud_Benchmark_v6.ipynb
+
+      - name: Check Python 3.11 bootstrap safeguards
         run: |
+          grep -F "bootstrap v5-py311" benchmarks/dialforge_colab_bootstrap.py
+          grep -F "dialforge-benchmark-py311-v5" benchmarks/dialforge_colab_bootstrap.py
+          grep -F "Provisioning managed CPython 3.11" benchmarks/dialforge_colab_bootstrap.py
+          grep -F "python_is_311" benchmarks/dialforge_colab_bootstrap.py
+          grep -F "numpy==1.26.4" benchmarks/dialforge_colab_bootstrap.py
           grep -F -- "--pipeline-models" benchmarks/dialforge_colab_bootstrap.py
           grep -F "ollama-linux-amd64.tar.zst" benchmarks/dialforge_colab_bootstrap.py
           grep -F -- '"-C"' benchmarks/dialforge_colab_bootstrap.py
-          grep -F "dialforge-benchmark-venv-v4" benchmarks/dialforge_colab_bootstrap.py
-          grep -F "python3-virtualenv" benchmarks/dialforge_colab_bootstrap.py
-          grep -F "virtualenv==20.35.4" benchmarks/dialforge_colab_bootstrap.py
-      - name: Test virtualenv path without stdlib ensurepip
-        run: sudo /usr/bin/python3 benchmarks/dialforge_colab_bootstrap.py --test-venv-only --no-require-cuda
+
+      - name: Test managed Python 3.11 environment path
+        run: sudo /usr/bin/python3 benchmarks/dialforge_colab_bootstrap.py --test-py311-only --no-require-cuda
+
       - name: Test exact resumable Ollama bootstrap path
         run: sudo /usr/bin/python3 benchmarks/dialforge_colab_bootstrap.py --install-ollama-only --no-require-cuda
