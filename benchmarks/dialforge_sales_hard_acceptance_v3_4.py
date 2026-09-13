@@ -15,6 +15,7 @@ import statistics
 
 import dialforge_sales_hard_acceptance_v3_3 as v33
 from dialforge_production_safety import route_turn, sanitize_marketing_claim
+from dialforge_spoken_safety import sanitize_spoken_action_integrity
 
 base = v33.base
 _RAW_RUN_TOOLS = v33.v32._ORIGINAL_RUN_TOOLS
@@ -169,9 +170,14 @@ def run_conversations(model, options):
             raw_text = result["content"]
             raw_score, raw_failures, raw_critical = base.score_text(turn["expect"], raw_text)
 
-            # This is the text that would actually be allowed through the shipping
-            # package/guarantee safety boundary before TTS/history.
-            text = sanitize_marketing_claim(raw_text, base.CAMPAIGN)
+            # Mirror the shipping speech boundary: unsupported external-action promises
+            # are filtered by the voice guard first, then package/guarantee claims are
+            # filtered by the claim guard. Raw model quality remains scored separately.
+            action_safe = sanitize_spoken_action_integrity(
+                raw_text,
+                allow_booking_claim=False,
+            )
+            text = sanitize_marketing_claim(action_safe, base.CAMPAIGN)
             score, failures, critical = base.score_text(turn["expect"], text)
 
             scores.append(score)
