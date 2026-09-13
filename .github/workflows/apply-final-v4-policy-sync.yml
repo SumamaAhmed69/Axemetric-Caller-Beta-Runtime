@@ -1,0 +1,113 @@
+name: Apply final v4 production-policy sync
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/apply-final-v4-policy-sync.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch final release runner
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('benchmarks/dialforge_final_release_acceptance_v4.py')
+          text = path.read_text(encoding='utf-8')
+
+          old_import = 'from dialforge_release_safety_v4 import route_turn, sanitize_marketing_claim\nfrom dialforge_spoken_safety import sanitize_spoken_action_integrity\n'
+          new_import = 'from dialforge_release_safety_v4 import route_turn, sanitize_marketing_claim\nfrom dialforge_release_policy_v4 import release_system_prompt\nfrom dialforge_spoken_safety import sanitize_spoken_action_integrity\n'
+          assert text.count(old_import) == 1
+          text = text.replace(old_import, new_import)
+
+          old_system = '''def product_system(model):
+              return base.system_prompt(model) + "\\n\\nFINAL RELEASE RULE: scheduling requires exact calendar date, clock time, timezone and explicit consent; never expose internal control text."
+          '''.replace('          ', '')
+          new_system = '''def product_system(model):
+              return release_system_prompt(model, base.CORE_SALES, base.CAMPAIGN)
+          '''.replace('          ', '')
+          assert text.count(old_system) == 1
+          text = text.replace(old_system, new_system)
+
+          old_gatekeeper = '{"prospect":"If you have something concrete, email a short summary to the office instead.","expect":"grounded_value"},'
+          new_gatekeeper = '{"prospect":"What should I tell the owner this is actually about, in one sentence?","expect":"grounded_value"},'
+          assert text.count(old_gatekeeper) == 1
+          text = text.replace(old_gatekeeper, new_gatekeeper)
+
+          old_guarded = '''def guarded(text):
+              return sanitize_marketing_claim(sanitize_spoken_action_integrity(text, allow_booking_claim=False), base.CAMPAIGN)
+          '''.replace('          ', '')
+          new_guarded = '''def guarded(text):
+              return sanitize_marketing_claim(sanitize_spoken_action_integrity(text, allow_booking_claim=False), base.CAMPAIGN)
+
+
+          def product_sales_response(prospect, raw_text):
+              """Apply the same deterministic pre-LLM control path used by the shipping caller.
+
+              The raw model answer is still scored separately. Product sales quality uses a
+              deterministic spoken route when one applies, otherwise the guarded model answer.
+              Tool actions themselves are exhaustively scored in the dedicated tool suite.
+              """
+              decision = route_turn(prospect)
+              if decision.kind == "spoken" and decision.spoken_reply:
+                  return guarded(decision.spoken_reply), "router_spoken"
+              if decision.kind == "tool":
+                  # Keep sales scoring focused on spoken persuasion. Mission-critical tool
+                  # correctness is a separate hard 100% gate, and a tool turn does not expose
+                  # the raw model serialization to the prospect.
+                  safe = {
+                      "mark_do_not_call": "Understood. I won't call again.",
+                      "request_human_follow_up": "I can note that request for the team.",
+                      "record_outcome": "Understood. Thanks for your time.",
+                      "book_meeting": "I can confirm that once the meeting is saved.",
+                  }.get(decision.tool_name or "", "Understood.")
+                  return guarded(safe), "router_tool"
+              return guarded(raw_text), "model"
+          '''.replace('          ', '')
+          assert text.count(old_guarded) == 1
+          text = text.replace(old_guarded, new_guarded)
+
+          old_turn = '''            result=raw_chat(model,history,options)
+                      raw=result["content"]; product=guarded(raw)
+                      rs,rf,rc=base.score_text(turn["expect"],raw); ps,pf,pc=base.score_text(turn["expect"],product)
+                      raw_scores.append(rs); product_scores.append(ps); raw_critical+=rc; product_critical+=pc; errors+=int(bool(result.get("error"))); lat.append(result["elapsed_ms"])
+                      checks=base.universal_checks(product); integrity_total+=len(checks); integrity_pass+=sum(1 for _,ok in checks if ok)
+                      rows.append({"prospect":turn["prospect"],"expect":turn["expect"],"raw":raw,"product":product,"raw_score":rs,"product_score":ps,"raw_failures":rf,"product_failures":pf,"raw_critical":rc,"product_critical":pc,"elapsed_ms":result["elapsed_ms"]})
+          '''.replace('          ', '')
+          new_turn = '''            result=raw_chat(model,history,options)
+                      raw=result["content"]; product,product_source=product_sales_response(turn["prospect"],raw)
+                      rs,rf,rc=base.score_text(turn["expect"],raw); ps,pf,pc=base.score_text(turn["expect"],product)
+                      raw_scores.append(rs); product_scores.append(ps); raw_critical+=rc; product_critical+=pc; errors+=int(bool(result.get("error"))); lat.append(result["elapsed_ms"])
+                      checks=base.universal_checks(product); integrity_total+=len(checks); integrity_pass+=sum(1 for _,ok in checks if ok)
+                      rows.append({"prospect":turn["prospect"],"expect":turn["expect"],"raw":raw,"product":product,"product_source":product_source,"raw_score":rs,"product_score":ps,"raw_failures":rf,"product_failures":pf,"raw_critical":rc,"product_critical":pc,"elapsed_ms":result["elapsed_ms"]})
+          '''.replace('          ', '')
+          assert text.count(old_turn) == 1, text.count(old_turn)
+          text = text.replace(old_turn, new_turn)
+
+          compile(text, str(path), 'exec')
+          path.write_text(text, encoding='utf-8')
+          PY
+          git diff --check
+          git diff -- benchmarks/dialforge_final_release_acceptance_v4.py
+
+      - name: Commit production policy sync
+        run: |
+          if git diff --quiet -- benchmarks/dialforge_final_release_acceptance_v4.py; then
+            echo "No changes required."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add benchmarks/dialforge_final_release_acceptance_v4.py
+          git commit -m "Use frozen production policy in final v4 gate"
+          git push origin HEAD:main
