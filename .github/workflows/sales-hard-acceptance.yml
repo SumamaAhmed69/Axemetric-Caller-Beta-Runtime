@@ -1,4 +1,4 @@
-name: Sales Hard Acceptance v3.2
+name: Sales Hard Acceptance v3.3
 
 on:
   workflow_dispatch:
@@ -8,6 +8,7 @@ on:
       - "benchmarks/dialforge_sales_hard_acceptance.py"
       - "benchmarks/dialforge_sales_hard_acceptance_v3_1.py"
       - "benchmarks/dialforge_sales_hard_acceptance_v3_2.py"
+      - "benchmarks/dialforge_sales_hard_acceptance_v3_3.py"
       - ".github/workflows/sales-hard-acceptance.yml"
 
 permissions:
@@ -66,12 +67,12 @@ jobs:
           cat "$RUNNER_TEMP/ollama-hard-sales.log" || true
           exit 1
 
-      - name: Run harder adversarial tuning and holdout for ${{ matrix.model }}
+      - name: Run v3.3 adversarial tuning and holdout for ${{ matrix.model }}
         shell: bash
         run: |
           set +e
           mkdir -p hard-sales-output
-          python benchmarks/dialforge_sales_hard_acceptance_v3_2.py \
+          python benchmarks/dialforge_sales_hard_acceptance_v3_3.py \
             --models '${{ matrix.model }}' \
             --output-dir hard-sales-output \
             2>&1 | tee hard-sales-output/run.log
@@ -83,7 +84,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Dialforge-Sales-Hard-v3-2-${{ matrix.id }}
+          name: Dialforge-Sales-Hard-v3-3-${{ matrix.id }}
           path: |
             hard-sales-output/dialforge-sales-hard-v3.json
             hard-sales-output/run.log
@@ -99,7 +100,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: Dialforge-Sales-Hard-v3-2-*
+          pattern: Dialforge-Sales-Hard-v3-3-*
           path: combined
           merge-multiple: false
 
@@ -131,7 +132,7 @@ jobs:
 
           ready = all(float(data['score']) >= threshold for data in models.values())
           combined = {
-              'version': 'sales-hard-v3.2-parallel',
+              'version': 'sales-hard-v3.3-parallel',
               'threshold': threshold,
               'marketing_ready': ready,
               'models': models,
@@ -139,7 +140,7 @@ jobs:
           Path('combined-report.json').write_text(json.dumps(combined, indent=2), encoding='utf-8')
 
           lines = [
-              '## Dialforge Sales Hard Acceptance v3.2',
+              '## Dialforge Sales Hard Acceptance v3.3',
               '',
               f"Marketing gate: **{'PASS' if ready else 'BLOCKED'}**",
               '',
@@ -167,7 +168,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Dialforge-Sales-Hard-v3-2-Combined
+          name: Dialforge-Sales-Hard-v3-3-Combined
           path: |
             combined-report.json
             summary.md
