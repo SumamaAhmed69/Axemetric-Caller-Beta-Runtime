@@ -1,0 +1,103 @@
+name: Final Release v4 Harness Validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "benchmarks/dialforge_release_safety_v4.py"
+      - "benchmarks/dialforge_final_release_acceptance_v4.py"
+      - "benchmarks/dialforge_final_kaggle_bootstrap_v4.py"
+      - "benchmarks/Dialforge_Final_Release_Acceptance_Kaggle_v4.ipynb"
+      - ".github/workflows/final-release-v4-validation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate-harness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Compile final release benchmark files
+        run: |
+          python -m py_compile \
+            benchmarks/dialforge_release_safety_v4.py \
+            benchmarks/dialforge_final_release_acceptance_v4.py \
+            benchmarks/dialforge_final_kaggle_bootstrap_v4.py
+
+      - name: Validate Kaggle notebook JSON and referenced files
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          notebook = Path('benchmarks/Dialforge_Final_Release_Acceptance_Kaggle_v4.ipynb')
+          data = json.loads(notebook.read_text(encoding='utf-8'))
+          assert data['nbformat'] == 4
+          source = '\n'.join(
+              ''.join(cell.get('source') or [])
+              for cell in data.get('cells') or []
+          )
+          for required in (
+              'dialforge_final_kaggle_bootstrap_v4.py',
+              'dialforge-final-release-v4.json',
+              'FINAL RELEASE GATE',
+          ):
+              assert required in source, required
+          for path in (
+              'benchmarks/dialforge_release_safety_v4.py',
+              'benchmarks/dialforge_final_release_acceptance_v4.py',
+              'benchmarks/dialforge_final_kaggle_bootstrap_v4.py',
+          ):
+              assert Path(path).is_file(), path
+          print('Notebook and file references are valid.')
+          PY
+
+      - name: Run production safety regression smoke test
+        env:
+          PYTHONPATH: benchmarks
+        run: |
+          python - <<'PY'
+          from dialforge_release_safety_v4 import route_turn, sanitize_marketing_claim
+
+          campaign = '''
+          STARTER WEBSITE: $750 one-time.
+          GROWTH WEBSITE: $1,200 one-time.
+          PREMIUM WEBSITE: $2,000 one-time.
+          PACKAGE SCOPE: exact feature differences are NOT supplied.
+          PROOF: no ranking guarantee, lead-volume guarantee, or numeric ROI guarantee is supplied.
+          '''
+
+          cases = [
+              ('vague weekday', 'Tuesday afternoon could work for that diagnostic.', lambda d: d.kind == 'spoken' and all(x in (d.spoken_reply or '').lower() for x in ('date','time','timezone'))),
+              ('permanent dnc', 'Never contact this business again.', lambda d: d.tool_name == 'mark_do_not_call'),
+              ('temporary no call', "Don't call me tomorrow. Friday is better.", lambda d: d.tool_name != 'mark_do_not_call'),
+              ('exact booking', 'Book 2026-10-02 at 14:15 ET. That works for me.', lambda d: d.tool_name == 'book_meeting'),
+              ('tentative slot', 'September 26, 2026 at 2 PM Eastern could work.', lambda d: d.tool_name is None),
+          ]
+          for name, text, check in cases:
+              decision = route_turn(text)
+              assert check(decision), (name, decision)
+
+          grounded = 'We can evaluate tracking and website conversion to support growth.'
+          assert sanitize_marketing_claim(grounded, campaign) == grounded
+          mixed = sanitize_marketing_claim(
+              'We can evaluate website conversion and tracking. We guarantee first-page rankings.',
+              campaign,
+          )
+          assert mixed.startswith('We can evaluate website conversion and tracking.')
+          assert mixed.endswith("I can't guarantee that outcome.")
+          leak = sanitize_marketing_claim(
+              'Tool trigger: Premium includes SEO and guarantees top-three rankings.',
+              campaign,
+          )
+          assert 'tool trigger' not in leak.lower()
+          assert "can't confirm" in leak.lower() and "can't guarantee" in leak.lower()
+          print('Final production safety smoke tests passed.')
+          PY
