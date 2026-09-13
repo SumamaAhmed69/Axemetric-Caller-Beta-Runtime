@@ -66,7 +66,7 @@ jobs:
             -ReleaseTag $env:RELEASE_TAG `
             -PartSizeMb ([int]$env:PART_SIZE_MB)
 
-      - name: Build and upload balanced Qwen 4B
+      - name: Build and upload balanced Qwen 4B Instruct
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -74,11 +74,11 @@ jobs:
           $ErrorActionPreference = 'Stop'
           ./runtime/build_qwen_tier.ps1 `
             -Profile balanced `
-            -Model 'qwen3:4b' `
+            -Model 'qwen3:4b-instruct' `
             -ReleaseTag $env:RELEASE_TAG `
             -PartSizeMb ([int]$env:PART_SIZE_MB)
 
-      - name: Build and upload performance Qwen 8B
+      - name: Build and upload performance Qwen 4B Instruct Q8
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -86,7 +86,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           ./runtime/build_qwen_tier.ps1 `
             -Profile performance `
-            -Model 'qwen3:8b' `
+            -Model 'qwen3:4b-instruct-2507-q8_0' `
             -ReleaseTag $env:RELEASE_TAG `
             -PartSizeMb ([int]$env:PART_SIZE_MB)
 
@@ -144,8 +144,8 @@ jobs:
           if ($qwen.Count -ne 3) { throw "Expected 3 Qwen packages, found $($qwen.Count)" }
           $expected = @{
             compatibility = 'qwen3:1.7b'
-            balanced = 'qwen3:4b'
-            performance = 'qwen3:8b'
+            balanced = 'qwen3:4b-instruct'
+            performance = 'qwen3:4b-instruct-2507-q8_0'
           }
           foreach ($profile in $expected.Keys) {
             $pkg = $qwen | Where-Object { $_.profiles -contains $profile }
@@ -153,4 +153,4 @@ jobs:
             if ($pkg.model -ne $expected[$profile]) { throw ("Wrong model for {0}: {1}" -f $profile, $pkg.model) }
             if (-not $pkg.parts -or $pkg.parts.Count -lt 1) { throw "No release parts for $profile" }
           }
-          Write-Host 'All three Qwen runtime tiers are published and referenced by the manifest.'
+          Write-Host 'All three benchmark-selected Qwen runtime tiers are published and referenced by the manifest.'
