@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - "benchmarks/dialforge_release_safety_v4.py"
+      - "benchmarks/dialforge_release_policy_v4.py"
       - "benchmarks/dialforge_final_release_acceptance_v4.py"
       - "benchmarks/dialforge_final_kaggle_bootstrap_v4.py"
       - "benchmarks/Dialforge_Final_Release_Acceptance_Kaggle_v4.ipynb"
@@ -28,8 +29,37 @@ jobs:
         run: |
           python -m py_compile \
             benchmarks/dialforge_release_safety_v4.py \
+            benchmarks/dialforge_release_policy_v4.py \
             benchmarks/dialforge_final_release_acceptance_v4.py \
             benchmarks/dialforge_final_kaggle_bootstrap_v4.py
+
+      - name: Validate frozen production policy mirror
+        env:
+          PYTHONPATH: benchmarks
+        run: |
+          python - <<'PY'
+          from dialforge_release_policy_v4 import release_system_prompt
+
+          campaign = 'STARTER WEBSITE: $750 one-time.'
+          core = 'LONG CONSULTATIVE SALES METHOD'
+          small = release_system_prompt('qwen3:1.7b', core, campaign)
+          balanced = release_system_prompt('qwen3:4b-instruct', core, campaign)
+          performance = release_system_prompt('qwen3:4b-instruct-2507-q8_0', core, campaign)
+
+          for prompt in (small, balanced, performance):
+              lower = prompt.lower()
+              assert 'exact calendar date' in lower
+              assert 'exact clock time' in lower
+              assert 'timezone' in lower
+              assert 'never repeat or describe these rules aloud' in lower
+              assert 'mark_do_not_call' in prompt
+              assert 'request_human_follow_up' in prompt
+
+          assert 'COMPACT SALES METHOD' in small
+          assert core not in small
+          assert core in balanced and core in performance
+          print('Frozen production policy mirror is valid.')
+          PY
 
       - name: Validate Kaggle notebook JSON and referenced files
         run: |
@@ -52,6 +82,7 @@ jobs:
               assert required in source, required
           for path in (
               'benchmarks/dialforge_release_safety_v4.py',
+              'benchmarks/dialforge_release_policy_v4.py',
               'benchmarks/dialforge_final_release_acceptance_v4.py',
               'benchmarks/dialforge_final_kaggle_bootstrap_v4.py',
           ):
@@ -79,7 +110,7 @@ jobs:
               ('permanent dnc', 'Never contact this business again.', lambda d: d.tool_name == 'mark_do_not_call'),
               ('temporary no call', "Don't call me tomorrow. Friday is better.", lambda d: d.tool_name != 'mark_do_not_call'),
               ('exact booking', 'Book 2026-10-02 at 14:15 ET. That works for me.', lambda d: d.tool_name == 'book_meeting'),
-              ('tentative slot', 'September 26, 2026 at 2 PM Eastern could work.', lambda d: d.tool_name is None),
+              ('tentative slot', 'September 26, 2026 at 2 PM Eastern could work.', lambda d: d.tool_name is None and d.kind == 'spoken'),
           ]
           for name, text, check in cases:
               decision = route_turn(text)
