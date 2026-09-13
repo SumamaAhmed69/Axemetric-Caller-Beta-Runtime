@@ -1,4 +1,4 @@
-name: Sales Hard Acceptance v3.3
+name: Sales Hard Acceptance v3.4
 
 on:
   workflow_dispatch:
@@ -9,6 +9,8 @@ on:
       - "benchmarks/dialforge_sales_hard_acceptance_v3_1.py"
       - "benchmarks/dialforge_sales_hard_acceptance_v3_2.py"
       - "benchmarks/dialforge_sales_hard_acceptance_v3_3.py"
+      - "benchmarks/dialforge_sales_hard_acceptance_v3_4.py"
+      - "benchmarks/dialforge_production_safety.py"
       - ".github/workflows/sales-hard-acceptance.yml"
 
 permissions:
@@ -20,7 +22,7 @@ concurrency:
 
 jobs:
   model-benchmark:
-    name: ${{ matrix.id }} sales gate
+    name: ${{ matrix.id }} production sales gate
     runs-on: ubuntu-latest
     timeout-minutes: 180
     strategy:
@@ -67,12 +69,12 @@ jobs:
           cat "$RUNNER_TEMP/ollama-hard-sales.log" || true
           exit 1
 
-      - name: Run v3.3 adversarial tuning and holdout for ${{ matrix.model }}
+      - name: Run v3.4 production-equivalent gate for ${{ matrix.model }}
         shell: bash
         run: |
           set +e
           mkdir -p hard-sales-output
-          python benchmarks/dialforge_sales_hard_acceptance_v3_3.py \
+          python benchmarks/dialforge_sales_hard_acceptance_v3_4.py \
             --models '${{ matrix.model }}' \
             --output-dir hard-sales-output \
             2>&1 | tee hard-sales-output/run.log
@@ -84,7 +86,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Dialforge-Sales-Hard-v3-3-${{ matrix.id }}
+          name: Dialforge-Sales-Hard-v3-4-${{ matrix.id }}
           path: |
             hard-sales-output/dialforge-sales-hard-v3.json
             hard-sales-output/run.log
@@ -100,11 +102,11 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: Dialforge-Sales-Hard-v3-3-*
+          pattern: Dialforge-Sales-Hard-v3-4-*
           path: combined
           merge-multiple: false
 
-      - name: Combine reports and enforce 85 minimum
+      - name: Combine reports and enforce production gate
         shell: bash
         run: |
           python - <<'PY'
@@ -113,6 +115,7 @@ jobs:
           from pathlib import Path
 
           threshold = 85.0
+          min_production_tools = 90.0
           files = sorted(Path('combined').glob('*/dialforge-sales-hard-v3.json'))
           if len(files) != 3:
               raise SystemExit(f'Expected 3 model reports, found {len(files)}')
@@ -130,45 +133,62 @@ jobs:
           if set(models) != expected:
               raise SystemExit(f'Wrong model set: {sorted(models)}')
 
-          ready = all(float(data['score']) >= threshold for data in models.values())
+          def passes(data):
+              sales = data['sales']
+              tools = data['tools']
+              return (
+                  float(data['score']) >= threshold
+                  and float(sales.get('raw_score', sales['score'])) >= threshold
+                  and float(tools['accuracy']) >= min_production_tools
+                  and int(sales['critical_failures']) == 0
+              )
+
+          ready = all(passes(data) for data in models.values())
           combined = {
-              'version': 'sales-hard-v3.3-parallel',
+              'version': 'sales-hard-v3.4-production',
               'threshold': threshold,
+              'minimum_production_tool_accuracy': min_production_tools,
               'marketing_ready': ready,
               'models': models,
           }
           Path('combined-report.json').write_text(json.dumps(combined, indent=2), encoding='utf-8')
 
           lines = [
-              '## Dialforge Sales Hard Acceptance v3.3',
+              '## Dialforge Sales Hard Acceptance v3.4',
               '',
               f"Marketing gate: **{'PASS' if ready else 'BLOCKED'}**",
               '',
-              '| Model | Score | Sales | Tools | Integrity | Critical | Tuning |',
-              '|---|---:|---:|---:|---:|---:|---|',
+              '| Model | Overall | Product sales | Raw sales | Product tools | Raw native tools | Integrity | Product critical | Raw critical | Pass |',
+              '|---|---:|---:|---:|---:|---:|---:|---:|---:|:---:|',
           ]
           for model in ('qwen3:1.7b','qwen3:4b-instruct','qwen3:4b-instruct-2507-q8_0'):
               data = models[model]
-              tune = data['tuning']['selected']
-              tune_text = f"T={tune['temperature']}, top_p={tune['top_p']}, max={tune['num_predict']}"
+              sales = data['sales']
+              tools = data['tools']
               lines.append(
-                  f"| {model} | {data['score']} | {data['sales']['score']} | {data['tools']['accuracy']} | "
-                  f"{data['sales']['integrity']} | {data['sales']['critical_failures']} | {tune_text} |"
+                  f"| {model} | {data['score']} | {sales['score']} | {sales.get('raw_score', 'n/a')} | "
+                  f"{tools['accuracy']} | {tools.get('raw_accuracy', 'n/a')} | {sales['integrity']} | "
+                  f"{sales['critical_failures']} | {sales.get('raw_critical_failures', 'n/a')} | {'✅' if passes(data) else '❌'} |"
               )
+          lines += [
+              '',
+              '**Pass criteria per tier:** overall >=85, raw sales >=85, production tool routing >=90, zero product critical spoken hallucinations.',
+              'Raw native tool serialization is diagnostic and remains visible; it is not substituted for the deterministic control layer that ships in Dialforge.',
+          ]
           Path('summary.md').write_text('\n'.join(lines), encoding='utf-8')
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as out:
               out.write('\n'.join(lines) + '\n')
 
           if not ready:
-              raise SystemExit('Marketing remains blocked until every shipping model scores at least 85.')
-          print('All shipping models cleared the 85-point marketing threshold.')
+              raise SystemExit('Marketing remains blocked until every shipping tier clears the v3.4 production gate.')
+          print('All shipping tiers cleared the v3.4 production marketing gate.')
           PY
 
       - name: Upload combined marketing gate
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Dialforge-Sales-Hard-v3-3-Combined
+          name: Dialforge-Sales-Hard-v3-4-Combined
           path: |
             combined-report.json
             summary.md
