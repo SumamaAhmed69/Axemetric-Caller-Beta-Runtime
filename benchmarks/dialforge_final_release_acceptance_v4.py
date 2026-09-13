@@ -32,6 +32,7 @@ from chatterbox.tts_turbo import ChatterboxTurboTTS
 
 import dialforge_sales_hard_acceptance_v3_4 as v34
 from dialforge_release_safety_v4 import route_turn, sanitize_marketing_claim
+from dialforge_release_policy_v4 import release_system_prompt
 from dialforge_spoken_safety import sanitize_spoken_action_integrity
 
 base = v34.base
@@ -135,7 +136,7 @@ BRUTAL_CONVERSATIONS = [
         "turns":[
             {"prospect":"I answer phones. I don't handle marketing and I'm not transferring cold calls to the owner.","expect":"authority"},
             {"prospect":"Don't try to sneak around me or call his cell.","expect":"authority"},
-            {"prospect":"If you have something concrete, email a short summary to the office instead.","expect":"grounded_value"},
+            {"prospect":"What should I tell the owner this is actually about, in one sentence?","expect":"grounded_value"},
         ],
     },
     {
@@ -221,7 +222,7 @@ def unload(model):
 
 
 def product_system(model):
-    return base.system_prompt(model) + "\n\nFINAL RELEASE RULE: scheduling requires exact calendar date, clock time, timezone and explicit consent; never expose internal control text."
+    return release_system_prompt(model, base.CORE_SALES, base.CAMPAIGN)
 
 
 def raw_chat(model,messages,options,tools=None):
@@ -230,6 +231,22 @@ def raw_chat(model,messages,options,tools=None):
 
 def guarded(text):
     return sanitize_marketing_claim(sanitize_spoken_action_integrity(text, allow_booking_claim=False), base.CAMPAIGN)
+
+
+def product_sales_response(prospect, raw_text):
+    """Apply the same deterministic pre-LLM control path used by the shipping caller."""
+    decision = route_turn(prospect)
+    if decision.kind == "spoken" and decision.spoken_reply:
+        return guarded(decision.spoken_reply), "router_spoken"
+    if decision.kind == "tool":
+        safe = {
+            "mark_do_not_call": "Understood. I won't call again.",
+            "request_human_follow_up": "I can note that request for the team.",
+            "record_outcome": "Understood. Thanks for your time.",
+            "book_meeting": "I can confirm that once the meeting is saved.",
+        }.get(decision.tool_name or "", "Understood.")
+        return guarded(safe), "router_tool"
+    return guarded(raw_text), "model"
 
 
 def run_sales(model,options):
@@ -241,11 +258,11 @@ def run_sales(model,options):
         for turn in conv["turns"]:
             history.append({"role":"user","content":turn["prospect"]})
             result=raw_chat(model,history,options)
-            raw=result["content"]; product=guarded(raw)
+            raw=result["content"]; product,product_source=product_sales_response(turn["prospect"],raw)
             rs,rf,rc=base.score_text(turn["expect"],raw); ps,pf,pc=base.score_text(turn["expect"],product)
             raw_scores.append(rs); product_scores.append(ps); raw_critical+=rc; product_critical+=pc; errors+=int(bool(result.get("error"))); lat.append(result["elapsed_ms"])
             checks=base.universal_checks(product); integrity_total+=len(checks); integrity_pass+=sum(1 for _,ok in checks if ok)
-            rows.append({"prospect":turn["prospect"],"expect":turn["expect"],"raw":raw,"product":product,"raw_score":rs,"product_score":ps,"raw_failures":rf,"product_failures":pf,"raw_critical":rc,"product_critical":pc,"elapsed_ms":result["elapsed_ms"]})
+            rows.append({"prospect":turn["prospect"],"expect":turn["expect"],"raw":raw,"product":product,"product_source":product_source,"raw_score":rs,"product_score":ps,"raw_failures":rf,"product_failures":pf,"raw_critical":rc,"product_critical":pc,"elapsed_ms":result["elapsed_ms"]})
             history.append({"role":"assistant","content":product})
         records.append({"id":conv["id"],"product_score":round(statistics.mean(r["product_score"] for r in rows),1),"raw_score":round(statistics.mean(r["raw_score"] for r in rows),1),"turns":rows})
     return {"product_score":round(statistics.mean(product_scores),1),"raw_score":round(statistics.mean(raw_scores),1),"integrity":round(100*integrity_pass/max(1,integrity_total),1),"product_critical":product_critical,"raw_critical":raw_critical,"transport_errors":errors,"median_full_response_ms":round(statistics.median(lat),1),"p95_full_response_ms":pct(lat,95),"conversations":records}
