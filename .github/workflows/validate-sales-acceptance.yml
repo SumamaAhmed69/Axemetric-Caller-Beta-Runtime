@@ -1,0 +1,50 @@
+name: Validate Dialforge Sales Acceptance
+
+on:
+  push:
+    paths:
+      - "benchmarks/dialforge_sales_acceptance.py"
+      - "benchmarks/Dialforge_Sales_Acceptance.ipynb"
+      - ".github/workflows/validate-sales-acceptance.yml"
+  pull_request:
+    paths:
+      - "benchmarks/dialforge_sales_acceptance.py"
+      - "benchmarks/Dialforge_Sales_Acceptance.ipynb"
+      - ".github/workflows/validate-sales-acceptance.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-sales:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile sales runner
+        run: python -m py_compile benchmarks/dialforge_sales_acceptance.py
+      - name: Validate Colab JSON
+        run: python -m json.tool benchmarks/Dialforge_Sales_Acceptance.ipynb > /dev/null
+      - name: Check immutable launcher contract
+        run: |
+          grep -F "ONE-CLICK DIALFORGE SALES ACCEPTANCE v1" benchmarks/Dialforge_Sales_Acceptance.ipynb
+          grep -F "commits/main" benchmarks/Dialforge_Sales_Acceptance.ipynb
+          grep -F "DIALFORGE_SOURCE_SHA" benchmarks/Dialforge_Sales_Acceptance.ipynb
+          grep -F "dialforge_sales_acceptance.py" benchmarks/Dialforge_Sales_Acceptance.ipynb
+          grep -F "dialforge-sales-acceptance-results.zip" benchmarks/Dialforge_Sales_Acceptance.ipynb
+      - name: Check consultative sales contract
+        run: |
+          grep -F "DISCOVER BEFORE PRESCRIBING" benchmarks/dialforge_sales_acceptance.py
+          grep -F "QUALIFY NATURALLY" benchmarks/dialforge_sales_acceptance.py
+          grep -F "VALUE BRIDGE" benchmarks/dialforge_sales_acceptance.py
+          grep -F "MICRO-COMMITMENTS" benchmarks/dialforge_sales_acceptance.py
+          grep -F "OBJECTION METHOD" benchmarks/dialforge_sales_acceptance.py
+          grep -F "mark_do_not_call" benchmarks/dialforge_sales_acceptance.py
+          grep -F "request_human_follow_up" benchmarks/dialforge_sales_acceptance.py
+          grep -F "book_meeting" benchmarks/dialforge_sales_acceptance.py
+          grep -F "record_outcome" benchmarks/dialforge_sales_acceptance.py
+          grep -F "PHENOMENAL" benchmarks/dialforge_sales_acceptance.py
+          grep -F "qwen3:4b-instruct-2507-q8_0" benchmarks/dialforge_sales_acceptance.py
