@@ -31,6 +31,8 @@ jobs:
           python -m py_compile benchmarks/dialforge_final_colab_bootstrap.py
           python -m py_compile benchmarks/dialforge_final_acceptance_v2.py
           python -m py_compile benchmarks/dialforge_final_colab_bootstrap_v2.py
+          python -m py_compile benchmarks/dialforge_final_acceptance_v3.py
+          python -m py_compile benchmarks/dialforge_final_colab_bootstrap_v3.py
 
       - name: Validate notebook JSON
         run: |
@@ -40,31 +42,42 @@ jobs:
           python -m json.tool benchmarks/Dialforge_Cloud_Benchmark_v6.ipynb > /dev/null
           python -m json.tool benchmarks/Dialforge_Final_Acceptance.ipynb > /dev/null
 
-      - name: Check final v2 immutable launcher contract
+      - name: Check final v3 immutable launcher contract
         run: |
-          grep -F "Dialforge Final Acceptance" benchmarks/Dialforge_Final_Acceptance.ipynb
-          grep -F "dialforge_final_colab_bootstrap_v2.py" benchmarks/Dialforge_Final_Acceptance.ipynb
+          grep -F "Dialforge Final Acceptance v3" benchmarks/Dialforge_Final_Acceptance.ipynb
+          grep -F "dialforge_final_colab_bootstrap_v3.py" benchmarks/Dialforge_Final_Acceptance.ipynb
           grep -F "DIALFORGE_SOURCE_SHA" benchmarks/Dialforge_Final_Acceptance.ipynb
           grep -F "commits/main" benchmarks/Dialforge_Final_Acceptance.ipynb
-          grep -F "dialforge-final-acceptance-results.zip" benchmarks/Dialforge_Final_Acceptance.ipynb
+          grep -F "dialforge-final-acceptance-v3-results.zip" benchmarks/Dialforge_Final_Acceptance.ipynb
 
-      - name: Check final v2 production model contract
+      - name: Check final v3 tool-aware production contract
+        run: |
+          grep -F 'BALANCED_MODEL = "qwen3:4b-instruct"' benchmarks/dialforge_final_acceptance_v3.py
+          grep -F 'PERFORMANCE_MODEL = "qwen3:4b-instruct-2507-q8_0"' benchmarks/dialforge_final_acceptance_v3.py
+          grep -F 'mark_do_not_call' benchmarks/dialforge_final_acceptance_v3.py
+          grep -F 'request_human_follow_up' benchmarks/dialforge_final_acceptance_v3.py
+          grep -F 'book_meeting' benchmarks/dialforge_final_acceptance_v3.py
+          grep -F 'record_outcome' benchmarks/dialforge_final_acceptance_v3.py
+          grep -F 'production_guard' benchmarks/dialforge_final_acceptance_v3.py
+          grep -F 'tool_routing' benchmarks/dialforge_final_acceptance_v3.py
+          grep -F 'TARGET_8GB_SAFE_MB = 6500' benchmarks/dialforge_final_acceptance_v3.py
+          grep -F 'PHENOMENAL' benchmarks/dialforge_final_acceptance_v3.py
+
+      - name: Check final v3 bootstrap safeguards
+        run: |
+          grep -F "FINAL COLAB ACCEPTANCE BOOTSTRAP v3" benchmarks/dialforge_final_colab_bootstrap_v3.py
+          grep -F "qwen3:1.7b" benchmarks/dialforge_final_colab_bootstrap_v3.py
+          grep -F "qwen3:4b-instruct" benchmarks/dialforge_final_colab_bootstrap_v3.py
+          grep -F "qwen3:4b-instruct-2507-q8_0" benchmarks/dialforge_final_colab_bootstrap_v3.py
+          grep -F "DIALFORGE_SOURCE_SHA" benchmarks/dialforge_final_colab_bootstrap_v3.py
+          grep -F "ollama-linux-amd64.tar.zst" benchmarks/dialforge_final_colab_bootstrap_v3.py
+
+      - name: Check final v2 historical production contract
         run: |
           grep -F 'TARGET_MODEL = "qwen3:4b-instruct"' benchmarks/dialforge_final_acceptance_v2.py
           grep -F 'PERFORMANCE_MODEL = "qwen3:4b-instruct-2507-q8_0"' benchmarks/dialforge_final_acceptance_v2.py
           grep -F '/api/chat' benchmarks/dialforge_final_acceptance_v2.py
-          grep -F '"think":False' benchmarks/dialforge_final_acceptance_v2.py
-          grep -F 'compute_type="int8"' benchmarks/dialforge_final_acceptance_v2.py
           grep -F 'guard_regressions' benchmarks/dialforge_final_acceptance_v2.py
-          grep -F 'PHENOMENAL' benchmarks/dialforge_final_acceptance_v2.py
-
-      - name: Check final v2 bootstrap safeguards
-        run: |
-          grep -F "FINAL COLAB ACCEPTANCE BOOTSTRAP v2" benchmarks/dialforge_final_colab_bootstrap_v2.py
-          grep -F "qwen3:4b-instruct" benchmarks/dialforge_final_colab_bootstrap_v2.py
-          grep -F "qwen3:4b-instruct-2507-q8_0" benchmarks/dialforge_final_colab_bootstrap_v2.py
-          grep -F "DIALFORGE_SOURCE_SHA" benchmarks/dialforge_final_colab_bootstrap_v2.py
-          grep -F "ollama-linux-amd64.tar.zst" benchmarks/dialforge_final_colab_bootstrap_v2.py
 
       - name: Check final v1 historical acceptance contract
         run: |
