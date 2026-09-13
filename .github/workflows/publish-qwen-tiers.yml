@@ -2,6 +2,9 @@ name: Publish Qwen Runtime Tiers
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - "runtime/qwen-tier-release-v20.4.0-beta.3"
 
 permissions:
   contents: write
@@ -12,7 +15,7 @@ concurrency:
 
 env:
   RELEASE_TAG: "beta-v20.4.0"
-  RUNTIME_VERSION: "20.4.0-beta.2"
+  RUNTIME_VERSION: "20.4.0-beta.3"
   OLLAMA_VERSION: "v0.34.0"
   OLLAMA_URL: "https://github.com/ollama/ollama/releases/download/v0.34.0/ollama-windows-amd64.zip"
   PART_SIZE_MB: "1700"
@@ -98,6 +101,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           @'
           import json
+          import os
           from datetime import datetime, timezone
           from pathlib import Path
 
@@ -113,7 +117,7 @@ jobs:
 
           models = {p['profiles'][0]: p['model'] for p in tiers}
           doc['schema'] = 2
-          doc['version'] = '20.4.0-beta.2'
+          doc['version'] = os.environ['RUNTIME_VERSION']
           doc['qwen_model'] = 'profile-selected'
           doc['qwen_models'] = models
           doc['generated_at'] = datetime.now(timezone.utc).isoformat()
@@ -140,6 +144,7 @@ jobs:
           $url = "https://github.com/SumamaAhmed69/Axemetric-Caller-Beta-Runtime/releases/download/$env:RELEASE_TAG/manifest.json"
           curl.exe -L --fail --retry 5 -o work/published-manifest.json $url
           $doc = Get-Content work/published-manifest.json -Raw | ConvertFrom-Json
+          if ($doc.version -ne $env:RUNTIME_VERSION) { throw "Wrong runtime version: $($doc.version)" }
           $qwen = @($doc.packages | Where-Object { $_.name -eq 'qwen-model' })
           if ($qwen.Count -ne 3) { throw "Expected 3 Qwen packages, found $($qwen.Count)" }
           $expected = @{
@@ -153,4 +158,4 @@ jobs:
             if ($pkg.model -ne $expected[$profile]) { throw ("Wrong model for {0}: {1}" -f $profile, $pkg.model) }
             if (-not $pkg.parts -or $pkg.parts.Count -lt 1) { throw "No release parts for $profile" }
           }
-          Write-Host 'All three benchmark-selected Qwen runtime tiers are published and referenced by the manifest.'
+          Write-Host 'All three benchmark-selected Qwen runtime tiers are published and referenced by the beta.3 manifest.'
