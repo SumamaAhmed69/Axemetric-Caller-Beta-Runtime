@@ -11,6 +11,8 @@ import re
 
 import dialforge_sales_hard_acceptance as base
 
+_ORIGINAL_UNIVERSAL_CHECKS = base.universal_checks
+
 _SCOPE_AFFIRM = re.compile(
     r"\b(?:starter|growth|premium|\$750|\$1,?200|\$2,?000).{0,90}"
     r"\b(?:includes?|adds?|comes with|covers?|gives you|provides?)\b",
@@ -38,7 +40,7 @@ def _invented_scope(text: str) -> bool:
 
 
 def universal_checks(text: str):
-    checks = base.universal_checks(text)
+    checks = _ORIGINAL_UNIVERSAL_CHECKS(text)
     patched = []
     for name, ok in checks:
         if name == "no_invented_scope":
