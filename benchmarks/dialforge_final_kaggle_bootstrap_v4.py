@@ -42,7 +42,7 @@ def main() -> int:
     legacy.validate_stack(python)
     legacy.start_ollama()
 
-    runner = BENCH / "dialforge_final_release_acceptance_v4.py"
+    runner = BENCH / "dialforge_final_release_acceptance_v4_kaggle.py"
     if not runner.exists():
         raise RuntimeError(f"Final runner missing: {runner}")
 
