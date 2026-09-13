@@ -1,0 +1,38 @@
+name: Validate Dialforge Sales Kaggle
+
+on:
+  push:
+    paths:
+      - "benchmarks/dialforge_sales_kaggle_bootstrap_v2_2.py"
+      - "benchmarks/Dialforge_Sales_Acceptance_Kaggle_v2_2.ipynb"
+      - ".github/workflows/validate-sales-kaggle.yml"
+  pull_request:
+    paths:
+      - "benchmarks/dialforge_sales_kaggle_bootstrap_v2_2.py"
+      - "benchmarks/Dialforge_Sales_Acceptance_Kaggle_v2_2.ipynb"
+      - ".github/workflows/validate-sales-kaggle.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-kaggle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile Kaggle bootstrap
+        run: python -m py_compile benchmarks/dialforge_sales_kaggle_bootstrap_v2_2.py
+      - name: Validate notebook JSON
+        run: python -m json.tool benchmarks/Dialforge_Sales_Acceptance_Kaggle_v2_2.ipynb > /dev/null
+      - name: Check Kaggle contract
+        run: |
+          grep -F "DIALFORGE SALES KAGGLE ACCEPTANCE v2.2" benchmarks/dialforge_sales_kaggle_bootstrap_v2_2.py
+          grep -F "/kaggle/working" benchmarks/dialforge_sales_kaggle_bootstrap_v2_2.py
+          grep -F "dialforge_sales_acceptance_v2_2.py" benchmarks/dialforge_sales_kaggle_bootstrap_v2_2.py
+          grep -F "ONE-CLICK DIALFORGE SALES KAGGLE ACCEPTANCE v2.2" benchmarks/Dialforge_Sales_Acceptance_Kaggle_v2_2.ipynb
+          grep -F "CUDA_VISIBLE_DEVICES" benchmarks/Dialforge_Sales_Acceptance_Kaggle_v2_2.ipynb
+          grep -F "KAGGLE FAILURE TAIL" benchmarks/Dialforge_Sales_Acceptance_Kaggle_v2_2.ipynb
