@@ -4,12 +4,18 @@ on:
   push:
     paths:
       - "benchmarks/dialforge_sales_acceptance.py"
+      - "benchmarks/dialforge_sales_colab_bootstrap_v2.py"
       - "benchmarks/Dialforge_Sales_Acceptance.ipynb"
+      - "benchmarks/Dialforge_Sales_Acceptance_v2.ipynb"
+      - "benchmarks/Dialforge_Sales_Acceptance_v2_1.ipynb"
       - ".github/workflows/validate-sales-acceptance.yml"
   pull_request:
     paths:
       - "benchmarks/dialforge_sales_acceptance.py"
+      - "benchmarks/dialforge_sales_colab_bootstrap_v2.py"
       - "benchmarks/Dialforge_Sales_Acceptance.ipynb"
+      - "benchmarks/Dialforge_Sales_Acceptance_v2.ipynb"
+      - "benchmarks/Dialforge_Sales_Acceptance_v2_1.ipynb"
       - ".github/workflows/validate-sales-acceptance.yml"
   workflow_dispatch:
 
@@ -24,17 +30,36 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Compile sales runner
-        run: python -m py_compile benchmarks/dialforge_sales_acceptance.py
-      - name: Validate Colab JSON
-        run: python -m json.tool benchmarks/Dialforge_Sales_Acceptance.ipynb > /dev/null
-      - name: Check immutable launcher contract
+
+      - name: Compile sales runner and dedicated bootstrap
         run: |
-          grep -F "ONE-CLICK DIALFORGE SALES ACCEPTANCE v1" benchmarks/Dialforge_Sales_Acceptance.ipynb
-          grep -F "commits/main" benchmarks/Dialforge_Sales_Acceptance.ipynb
-          grep -F "DIALFORGE_SOURCE_SHA" benchmarks/Dialforge_Sales_Acceptance.ipynb
-          grep -F "dialforge_sales_acceptance.py" benchmarks/Dialforge_Sales_Acceptance.ipynb
-          grep -F "dialforge-sales-acceptance-results.zip" benchmarks/Dialforge_Sales_Acceptance.ipynb
+          python -m py_compile benchmarks/dialforge_sales_acceptance.py
+          python -m py_compile benchmarks/dialforge_sales_colab_bootstrap_v2.py
+
+      - name: Validate Colab JSON
+        run: |
+          python -m json.tool benchmarks/Dialforge_Sales_Acceptance.ipynb > /dev/null
+          python -m json.tool benchmarks/Dialforge_Sales_Acceptance_v2.ipynb > /dev/null
+          python -m json.tool benchmarks/Dialforge_Sales_Acceptance_v2_1.ipynb > /dev/null
+
+      - name: Check v2.1 dedicated launcher contract
+        run: |
+          grep -F "ONE-CLICK DIALFORGE SALES ACCEPTANCE v2.1" benchmarks/Dialforge_Sales_Acceptance_v2_1.ipynb
+          grep -F "dialforge_sales_colab_bootstrap_v2.py" benchmarks/Dialforge_Sales_Acceptance_v2_1.ipynb
+          grep -F "v2.1-dedicated-bootstrap" benchmarks/Dialforge_Sales_Acceptance_v2_1.ipynb
+          grep -F "DIALFORGE_SOURCE_SHA" benchmarks/Dialforge_Sales_Acceptance_v2_1.ipynb
+          grep -F "stderr=subprocess.STDOUT" benchmarks/Dialforge_Sales_Acceptance_v2_1.ipynb
+          grep -F "LAST 120 LINES" benchmarks/Dialforge_Sales_Acceptance_v2_1.ipynb
+
+      - name: Check dedicated bootstrap delegation contract
+        run: |
+          grep -F "DIALFORGE SALES COLAB ACCEPTANCE v2.1" benchmarks/dialforge_sales_colab_bootstrap_v2.py
+          grep -F "dialforge_final_colab_bootstrap_v3.py" benchmarks/dialforge_sales_colab_bootstrap_v2.py
+          grep -F "dialforge_sales_acceptance.py" benchmarks/dialforge_sales_colab_bootstrap_v2.py
+          grep -F "base.RUNNER_PATH" benchmarks/dialforge_sales_colab_bootstrap_v2.py
+          grep -F "base.main()" benchmarks/dialforge_sales_colab_bootstrap_v2.py
+          grep -F "DIALFORGE_SOURCE_SHA" benchmarks/dialforge_sales_colab_bootstrap_v2.py
+
       - name: Check consultative sales contract
         run: |
           grep -F "DISCOVER BEFORE PRESCRIBING" benchmarks/dialforge_sales_acceptance.py
