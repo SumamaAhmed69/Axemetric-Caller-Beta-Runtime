@@ -1,0 +1,218 @@
+name: Publish Direct SIP Runtime
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "runtime/dialforge_audio/**"
+      - ".github/workflows/publish-direct-sip-runtime.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: axemetric-direct-sip-runtime
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: "beta-v20.4.0"
+  RUNTIME_VERSION: "20.4.0-beta.4"
+  BARESIP_TAG: "v4.10.0"
+  RE_TAG: "v4.10.0"
+  SIP_ASSET: "dialforge-sip-v4.10.0.zip"
+
+jobs:
+  publish-direct-sip:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install native prerequisites
+        shell: pwsh
+        run: |
+          choco install openssl -y --no-progress
+          git --version
+          cmake --version
+          ninja --version
+
+      - name: Build libre and Baresip with Dialforge audio bridge
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          git clone --depth 1 --branch %RE_TAG% https://github.com/baresip/re.git native\re
+          git clone --depth 1 --branch %BARESIP_TAG% https://github.com/baresip/baresip.git native\baresip
+          cmake -S native\re -B native\re\build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build native\re\build -j
+          cmake -S native\baresip -B native\baresip\build -G Ninja -DCMAKE_BUILD_TYPE=Release -DMODULES="account;auconv;auresamp;ctrl_tcp;g711;ice;menu;stun;turn;uuid" -DAPP_MODULES_DIR="%GITHUB_WORKSPACE%\runtime" -DAPP_MODULES="dialforge_audio"
+          cmake --build native\baresip\build -j
+          cmake --install native\re\build --prefix "%GITHUB_WORKSPACE%\stage"
+          cmake --install native\baresip\build --prefix "%GITHUB_WORKSPACE%\stage"
+
+      - name: Assemble redistributable package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bin = Join-Path $PWD 'stage/bin'
+          $mods = Join-Path $PWD 'stage/lib/baresip/modules'
+          if (-not (Test-Path "$bin/baresip.exe")) {
+            $exe = Get-ChildItem native/baresip/build -Recurse -Filter baresip.exe | Select-Object -First 1
+            if (-not $exe) { throw 'baresip.exe was not built' }
+            New-Item -ItemType Directory -Force $bin | Out-Null
+            Copy-Item $exe.FullName "$bin/baresip.exe" -Force
+          }
+          New-Item -ItemType Directory -Force $mods | Out-Null
+
+          foreach ($name in @('g711','auconv','auresamp','ctrl_tcp','account','menu','stun','turn','ice','uuid','dialforge_audio')) {
+            if (-not (Test-Path (Join-Path $mods "$name.dll"))) {
+              $dll = Get-ChildItem native/baresip/build -Recurse -Filter "$name.dll" | Select-Object -First 1
+              if (-not $dll) { throw "Required Baresip module missing: $name.dll" }
+              Copy-Item $dll.FullName $mods -Force
+            }
+          }
+
+          foreach ($pattern in @('re.dll','baresip.dll','libssl*.dll','libcrypto*.dll')) {
+            $found = @(
+              Get-ChildItem stage,native/re/build,native/baresip/build,'C:/Program Files/OpenSSL-Win64/bin' -Recurse -Filter $pattern -ErrorAction SilentlyContinue |
+              Sort-Object FullName -Unique
+            )
+            foreach ($file in $found) {
+              $target = Join-Path $bin $file.Name
+              if (-not (Test-Path $target)) { Copy-Item $file.FullName $target -Force }
+            }
+          }
+
+          Copy-Item native/baresip/LICENSE stage/BARESIP-LICENSE.txt -Force
+          Copy-Item native/re/LICENSE stage/LIBRE-LICENSE.txt -Force
+          @'
+          Dialforge Direct SIP runtime
+          Baresip v4.10.0 + libre v4.10.0
+          Baresip/libre are redistributed under their BSD licenses.
+          Dialforge's custom dialforge_audio module exchanges PCM only over 127.0.0.1.
+          '@ | Set-Content stage/DIALFORGE-SIP-RUNTIME.txt -Encoding utf8
+
+          Write-Host 'Packaged files:'
+          Get-ChildItem stage -Recurse | Select-Object FullName,Length
+
+      - name: Smoke test Direct SIP sidecar
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $cfgDir = Join-Path $PWD 'smoke-config'
+          New-Item -ItemType Directory -Force $cfgDir | Out-Null
+          $mods = (Resolve-Path 'stage/lib/baresip/modules').Path
+          @"
+          call_max_calls 1
+          call_accept no
+          audio_player dialforge,bridge
+          audio_source dialforge,bridge
+          ausrc_srate 16000
+          auplay_srate 16000
+          ausrc_channels 1
+          auplay_channels 1
+          ausrc_format s16
+          auplay_format s16
+          auenc_format s16
+          audec_format s16
+          module_path $mods
+          module g711.dll
+          module auconv.dll
+          module auresamp.dll
+          module dialforge_audio.dll
+          module_app account.dll
+          module_app menu.dll
+          module_app ctrl_tcp.dll
+          ctrl_tcp_listen 127.0.0.1:4444
+          dialforge_audio_host 127.0.0.1
+          dialforge_audio_rx_port 47500
+          dialforge_audio_tx_port 47501
+          dialforge_audio_srate 16000
+          dialforge_audio_ptime 20
+          "@ | Set-Content "$cfgDir/config" -Encoding ascii
+          '' | Set-Content "$cfgDir/accounts" -Encoding ascii
+
+          $proc = Start-Process -FilePath (Resolve-Path 'stage/bin/baresip.exe') -ArgumentList @('-f', $cfgDir) -PassThru -RedirectStandardOutput smoke-out.log -RedirectStandardError smoke-err.log
+          try {
+            $ready = $false
+            for ($i=0; $i -lt 80; $i++) {
+              if ($proc.HasExited) { break }
+              try {
+                $tcp = New-Object Net.Sockets.TcpClient
+                $tcp.Connect('127.0.0.1',4444)
+                $tcp.Close()
+                $ready = $true
+                break
+              } catch { Start-Sleep -Milliseconds 250 }
+            }
+            if (-not $ready) {
+              Get-Content smoke-out.log -ErrorAction SilentlyContinue
+              Get-Content smoke-err.log -ErrorAction SilentlyContinue
+              throw 'Baresip Direct SIP control socket did not become ready'
+            }
+            Write-Host 'Direct SIP sidecar smoke test passed.'
+          } finally {
+            if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+          }
+
+      - name: Publish Direct SIP package and beta.4 manifest
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Compress-Archive -Path stage/* -DestinationPath $env:SIP_ASSET -CompressionLevel Optimal -Force
+          $sha = (Get-FileHash $env:SIP_ASSET -Algorithm SHA256).Hash.ToLowerInvariant()
+          $size = (Get-Item $env:SIP_ASSET).Length
+
+          New-Item -ItemType Directory -Force work | Out-Null
+          gh release download $env:RELEASE_TAG --pattern manifest.json --dir work --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Could not download current runtime manifest' }
+
+          $env:SIP_SHA = $sha
+          $env:SIP_SIZE = [string]$size
+          @'
+          import json, os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          p = Path('work/manifest.json')
+          doc = json.loads(p.read_text(encoding='utf-8-sig'))
+          packages = [x for x in doc.get('packages', []) if x.get('name') != 'sip']
+          asset = os.environ['SIP_ASSET']
+          packages.append({
+              'name': 'sip',
+              'file': asset,
+              'url': f"https://github.com/SumamaAhmed69/Axemetric-Caller-Beta-Runtime/releases/download/{os.environ['RELEASE_TAG']}/{asset}",
+              'sha256': os.environ['SIP_SHA'],
+              'size': int(os.environ['SIP_SIZE']),
+              'profiles': ['compatibility','balanced','performance'],
+              'engine': 'baresip',
+              'version': '4.10.0',
+          })
+          doc['version'] = os.environ['RUNTIME_VERSION']
+          doc['generated_at'] = datetime.now(timezone.utc).isoformat()
+          doc['packages'] = packages
+          Path('work/manifest-beta4.json').write_text(json.dumps(doc, indent=2), encoding='utf-8')
+          '@ | python -
+
+          gh release upload $env:RELEASE_TAG $env:SIP_ASSET --clobber
+          gh release upload $env:RELEASE_TAG work/manifest-beta4.json#manifest.json --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Could not publish Direct SIP runtime' }
+
+      - name: Verify published beta.4 runtime
+        shell: pwsh
+        run: |
+          $url = "https://github.com/SumamaAhmed69/Axemetric-Caller-Beta-Runtime/releases/download/$env:RELEASE_TAG/manifest.json"
+          curl.exe -L --fail --retry 5 -o published-manifest.json $url
+          $doc = Get-Content published-manifest.json -Raw | ConvertFrom-Json
+          if ($doc.version -ne $env:RUNTIME_VERSION) { throw "Wrong runtime version: $($doc.version)" }
+          $sip = @($doc.packages | Where-Object { $_.name -eq 'sip' })
+          if ($sip.Count -ne 1) { throw "Expected exactly one SIP package, found $($sip.Count)" }
+          foreach ($profile in @('compatibility','balanced','performance')) {
+            if ($sip[0].profiles -notcontains $profile) { throw "SIP package missing profile $profile" }
+          }
+          Write-Host 'Dialforge beta.4 Direct SIP runtime is published and verified.'
