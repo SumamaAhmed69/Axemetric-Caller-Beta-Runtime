@@ -16,23 +16,19 @@ class RouteDecision:
 
 
 _DNC = re.compile(
-    r"\b(?:do\s*not|don't|dont|never)\s+(?:call|contact)\b|"
-    r"\bstop\s+(?:calling|contacting)\b|"
+    r"\b(?:do\s*not|don't|dont|never)\s+(?:call|contact)\b|\bstop\s+(?:calling|contacting)\b|"
     r"\bremove\s+(?:me|us|this\s+business|this\s+number)\b.{0,40}\b(?:list|calls?|contact)\b|"
     r"\btake\s+(?:me|us|this\s+business|this\s+number)\s+off\b.{0,30}\blist\b|"
-    r"\blose\s+my\s+number\b|\bno\s+further\s+contact\b",
-    re.I,
+    r"\blose\s+my\s+number\b|\bno\s+further\s+contact\b", re.I,
 )
 _TEMPORAL_CALL_NEGATION = re.compile(
-    r"\b(?:do\s*not|don't|dont)\s+call(?:\s+me|\s+us)?\s+(?:today|tomorrow|tonight|"
-    r"this\s+(?:morning|afternoon|evening|week)|next\s+week|before\b|after\b|until\b)", re.I,
+    r"\b(?:do\s*not|don't|dont)\s+call(?:\s+me|\s+us)?\s+(?:today|tomorrow|tonight|this\s+(?:morning|afternoon|evening|week)|next\s+week|before\b|after\b|until\b)", re.I,
 )
 _THIRD_PARTY_CONTACT_NEGATION = re.compile(
     r"\b(?:do\s*not|don't|dont)\s+(?:call|contact)\s+(?:the\s+)?(?:owner|manager|office|dispatcher|my\s+boss)\b", re.I,
 )
 _WRONG = re.compile(
-    r"\bwrong\s+(?:number|person|business|company)\b|"
-    r"\b(?:you(?:'ve| have)\s+got|you\s+have)\s+the\s+wrong\s+(?:number|person|business|company)\b", re.I,
+    r"\bwrong\s+(?:number|person|business|company)\b|\b(?:you(?:'ve| have)\s+got|you\s+have)\s+the\s+wrong\s+(?:number|person|business|company)\b", re.I,
 )
 _VOICEMAIL = re.compile(
     r"\bleave\s+(?:a\s+)?message\b.{0,40}\b(?:tone|beep)\b|"
@@ -40,7 +36,7 @@ _VOICEMAIL = re.compile(
     r"\bvoicemail\b|\banswering\s+machine\b", re.I,
 )
 _INFO = re.compile(
-    r"\b(?:email|e-mail|text|send|message)\s+(?:me|us)?\s*(?:the\s+)?(?:details?|info(?:rmation)?|summary|prices?|pricing|website\s+prices?|something)\b|"
+    r"\b(?:email|e-mail|text|send|message)\b.{0,50}\b(?:details?|info(?:rmation)?|summary|prices?|pricing|website\s+prices?|something)\b|"
     r"\b(?:have|get)\s+(?:a\s+)?(?:human|person|someone|your\s+team)\s+(?:follow\s*up|contact|email|text|call)\b|"
     r"\b(?:follow\s*up|follow-up)\s+(?:by|via)\s+(?:email|text|phone)\b", re.I,
 )
@@ -69,8 +65,7 @@ _ISO_DATE_RE = re.compile(r"\b(20\d{2})-(\d{2})-(\d{2})\b")
 _TIME_12_RE = re.compile(r"\b(1[0-2]|0?[1-9])(?::([0-5]\d))?\s*(a\.?m\.?|p\.?m\.?)\b", re.I)
 _TIME_24_RE = re.compile(r"\b([01]?\d|2[0-3]):([0-5]\d)\b")
 _TZ_RE = re.compile(
-    r"\b(?:Eastern|Central|Mountain|Pacific|Atlantic|UTC|GMT|EST|EDT|CST|CDT|MST|MDT|PST|PDT|ET|CT|MT|PT)\b|"
-    r"\b[A-Za-z]+/[A-Za-z_+-]+\b", re.I,
+    r"\b(?:Eastern|Central|Mountain|Pacific|Atlantic|UTC|GMT|EST|EDT|CST|CDT|MST|MDT|PST|PDT|ET|CT|MT|PT)\b|\b[A-Za-z]+/[A-Za-z_+-]+\b", re.I,
 )
 
 _PACKAGE_TOKEN = re.compile(r"\b(?:starter|basic|growth|premium|entry[-\s]?level)\b|[$£€]\s*\d[\d,]*(?:\.\d+)?", re.I)
@@ -81,16 +76,16 @@ _FEATURE_TERM = re.compile(
     r"\b(?:seo|search\s+engine\s+optimization|pages?|page\s+count|hosting|maintenance|support|revisions?|copy|content|google\s+ads?|paid\s+search|tracking|analytics|crm|automation|rankings?|local\s+seo|blog|e-?commerce|booking|forms?)\b", re.I,
 )
 _GUARANTEE = re.compile(
-    r"\b(?:guarantee[sd]?|guaranteed|promise[sd]?)\b.{0,70}\b(?:rankings?|leads?|calls?|jobs?|revenue|results?|roi|savings?)\b|"
-    r"\b(?:rankings?|leads?|calls?|jobs?|revenue|results?|roi|savings?)\b.{0,70}\b(?:guarantee[sd]?|guaranteed|promise[sd]?)\b", re.I,
+    r"\b(?:guarantee[sd]?|guaranteed|promise[sd]?)\b.{0,90}\b(?:rankings?|leads?|calls?|jobs?|revenue|results?|roi|savings?)\b|"
+    r"\b(?:rankings?|leads?|calls?|jobs?|revenue|results?|roi|savings?)\b.{0,90}\b(?:guarantee[sd]?|guaranteed|promise[sd]?)\b", re.I,
 )
 _UNCERTAINTY = re.compile(
     r"\b(?:can't|cannot|can not|don't|do not|won't|will not|wouldn't|would not|not supplied|not provided|don't have|do not have|can't confirm|cannot confirm|don't know|do not know|no guarantee|not guaranteed|don't want to guess|do not want to guess)\b", re.I,
 )
-_NEGATIVE_SOURCE = re.compile(r"\b(?:no|not|never|cannot|can't|do not|don't|without|prohibited|unsupported)\b", re.I)
+_NEGATIVE_SOURCE = re.compile(r"\b(?:no|not|never|cannot|can't|do not|don't|without|prohibited|unsupported|unavailable)\b", re.I)
+_GUARANTEE_WORD = re.compile(r"\b(?:guarantee[sd]?|guaranteed|promise[sd]?)\b", re.I)
 _CONTROL_LEAK = re.compile(
-    r"\b(?:tool trigger|mandatory tool router|private call control rules|dialforge turn decision card|problem \+ impact|prospect asserts|call mark_do_not_call|action priority|sales priority|small-model mode)\b|<tool>|\brecord_outcome\s*\{|\bbook_meeting\s*\{",
-    re.I,
+    r"\b(?:tool trigger|mandatory tool router|private call control rules|dialforge turn decision card|problem \+ impact|prospect asserts|call mark_do_not_call|action priority|sales priority|small-model mode)\b|<tool>|\brecord_outcome\s*\{|\bbook_meeting\s*\{", re.I,
 )
 
 
@@ -171,7 +166,6 @@ def route_turn(text: str) -> RouteDecision:
         return RouteDecision("tool", "request_human_follow_up", {"reason":value[:500],"preferred_channel":_preferred_channel(value)}, reason="follow_up")
     if _CLEAR_REFUSAL.search(value):
         return RouteDecision("tool", "record_outcome", {"outcome":"not_interested"}, reason="not_interested")
-
     b = booking_components(value)
     if _SCHEDULING_SIGNAL.search(value) or any(b.get(k) for k in ("date","time","timezone")):
         if b["negated"]:
@@ -181,11 +175,8 @@ def route_turn(text: str) -> RouteDecision:
             return RouteDecision("tool", "book_meeting", {"title":"Scheduled meeting","starts_at":b["starts_at"],"timezone":b["timezone"],"notes":"Booked from explicit prospect agreement."}, reason="exact_booking")
         if missing:
             prompts = {
-                ("timezone",): "What timezone should I use?",
-                ("time",): "What exact time works?",
-                ("date",): "What exact date works?",
-                ("date","time"): "What exact date and time works best?",
-                ("time","timezone"): "What exact time and timezone should I use?",
+                ("timezone",): "What timezone should I use?", ("time",): "What exact time works?", ("date",): "What exact date works?",
+                ("date","time"): "What exact date and time works best?", ("time","timezone"): "What exact time and timezone should I use?",
                 ("date","timezone"): "What exact date and timezone should I use?",
             }
             return RouteDecision("spoken", spoken_reply=prompts.get(tuple(missing), "What exact date, time, and timezone works best?"), reason="booking_incomplete")
@@ -194,10 +185,12 @@ def route_turn(text: str) -> RouteDecision:
 
 
 def _positive_source_supports_guarantee(source: str) -> bool:
-    value = _clean(source)
-    for match in re.finditer(r"\b(?:guarantee[sd]?|guaranteed|promise[sd]?)\b", value, re.I):
-        if not _NEGATIVE_SOURCE.search(value[max(0, match.start()-50):match.start()]):
-            return True
+    for clause in [part.strip() for part in re.split(r"[.\n;]+", str(source or "")) if part.strip()]:
+        if not _GUARANTEE_WORD.search(clause):
+            continue
+        if _NEGATIVE_SOURCE.search(clause):
+            continue
+        return True
     return False
 
 
@@ -208,8 +201,7 @@ def _scope_relation_supported(sentence: str, source: str) -> bool:
         return True
     package = package_match.group(0).lower().replace(",", "")
     source_value = _clean(source).lower().replace(",", "")
-    positions = [m.start() for m in re.finditer(re.escape(package), source_value)]
-    for position in positions:
+    for position in [m.start() for m in re.finditer(re.escape(package), source_value)]:
         window = source_value[max(0, position-180):position+320]
         if all(feature in window for feature in features) and not re.search(r"\b(?:not supplied|not provided|unknown|do not include exact|don't include exact)\b", window):
             return True
