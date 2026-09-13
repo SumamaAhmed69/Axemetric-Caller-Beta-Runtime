@@ -17,9 +17,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  hard-sales-gate:
+  model-benchmark:
+    name: ${{ matrix.id }} sales gate
     runs-on: ubuntu-latest
-    timeout-minutes: 330
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: compatibility
+            model: qwen3:1.7b
+          - id: balanced
+            model: qwen3:4b-instruct
+          - id: performance
+            model: qwen3:4b-instruct-2507-q8_0
     env:
       OLLAMA_NUM_PARALLEL: "1"
       OLLAMA_MAX_LOADED_MODELS: "1"
@@ -54,61 +65,110 @@ jobs:
           cat "$RUNNER_TEMP/ollama-hard-sales.log" || true
           exit 1
 
-      - name: Run adversarial model tuner and holdout gate
-        id: acceptance
+      - name: Run adversarial tuning and holdout for ${{ matrix.model }}
         shell: bash
         run: |
           set +e
           mkdir -p hard-sales-output
-          python benchmarks/dialforge_sales_hard_acceptance_v3_1.py --output-dir hard-sales-output 2>&1 | tee hard-sales-output/run.log
+          python benchmarks/dialforge_sales_hard_acceptance_v3_1.py \
+            --models '${{ matrix.model }}' \
+            --output-dir hard-sales-output \
+            2>&1 | tee hard-sales-output/run.log
           code=${PIPESTATUS[0]}
-          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          echo "$code" > hard-sales-output/exit-code.txt
           exit 0
 
-      - name: Publish score summary
-        if: always()
-        shell: bash
-        run: |
-          if [ -f hard-sales-output/dialforge-sales-hard-v3.json ]; then
-            python - <<'PY'
-          import json
-          from pathlib import Path
-          p=Path('hard-sales-output/dialforge-sales-hard-v3.json')
-          r=json.loads(p.read_text())
-          lines=['## Dialforge Sales Hard Acceptance v3.1','',f"Marketing gate: **{'PASS' if r['marketing_ready'] else 'BLOCKED'}**",'', '| Model | Score | Sales | Tools | Integrity | Critical |', '|---|---:|---:|---:|---:|---:|']
-          for model,d in r['models'].items():
-              lines.append(f"| {model} | {d['score']} | {d['sales']['score']} | {d['tools']['accuracy']} | {d['sales']['integrity']} | {d['sales']['critical_failures']} |")
-          Path('hard-sales-output/summary.md').write_text('\n'.join(lines), encoding='utf-8')
-          with open(Path(__import__('os').environ['GITHUB_STEP_SUMMARY']), 'a', encoding='utf-8') as f:
-              f.write('\n'.join(lines)+'\n')
-          PY
-          else
-            echo "No report was produced." >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      - name: Upload hard sales report
+      - name: Upload ${{ matrix.id }} report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Dialforge-Sales-Hard-v3-1
+          name: Dialforge-Sales-Hard-v3-1-${{ matrix.id }}
           path: |
             hard-sales-output/dialforge-sales-hard-v3.json
             hard-sales-output/run.log
-            hard-sales-output/summary.md
+            hard-sales-output/exit-code.txt
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Enforce marketing gate
-        if: always()
+  marketing-gate:
+    name: Marketing gate
+    needs: model-benchmark
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Dialforge-Sales-Hard-v3-1-*
+          path: combined
+          merge-multiple: false
+
+      - name: Combine reports and enforce 85 minimum
         shell: bash
         run: |
-          code='${{ steps.acceptance.outputs.exit_code }}'
-          if [ -z "$code" ]; then
-            echo "Benchmark did not return an exit code."
-            exit 1
-          fi
-          if [ "$code" != "0" ]; then
-            echo "Marketing remains blocked until every shipping model scores at least 85."
-            exit "$code"
-          fi
-          echo "All shipping models cleared the 85-point marketing threshold."
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          threshold = 85.0
+          files = sorted(Path('combined').glob('*/dialforge-sales-hard-v3.json'))
+          if len(files) != 3:
+              raise SystemExit(f'Expected 3 model reports, found {len(files)}')
+
+          models = {}
+          for path in files:
+              report = json.loads(path.read_text(encoding='utf-8'))
+              models.update(report.get('models') or {})
+
+          expected = {
+              'qwen3:1.7b',
+              'qwen3:4b-instruct',
+              'qwen3:4b-instruct-2507-q8_0',
+          }
+          if set(models) != expected:
+              raise SystemExit(f'Wrong model set: {sorted(models)}')
+
+          ready = all(float(data['score']) >= threshold for data in models.values())
+          combined = {
+              'version': 'sales-hard-v3.1-parallel',
+              'threshold': threshold,
+              'marketing_ready': ready,
+              'models': models,
+          }
+          Path('combined-report.json').write_text(json.dumps(combined, indent=2), encoding='utf-8')
+
+          lines = [
+              '## Dialforge Sales Hard Acceptance v3.1',
+              '',
+              f"Marketing gate: **{'PASS' if ready else 'BLOCKED'}**",
+              '',
+              '| Model | Score | Sales | Tools | Integrity | Critical | Tuning |',
+              '|---|---:|---:|---:|---:|---:|---|',
+          ]
+          for model in ('qwen3:1.7b','qwen3:4b-instruct','qwen3:4b-instruct-2507-q8_0'):
+              data = models[model]
+              tune = data['tuning']['selected']
+              tune_text = f"T={tune['temperature']}, top_p={tune['top_p']}, max={tune['num_predict']}"
+              lines.append(
+                  f"| {model} | {data['score']} | {data['sales']['score']} | {data['tools']['accuracy']} | "
+                  f"{data['sales']['integrity']} | {data['sales']['critical_failures']} | {tune_text} |"
+              )
+          Path('summary.md').write_text('\n'.join(lines), encoding='utf-8')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as out:
+              out.write('\n'.join(lines) + '\n')
+
+          if not ready:
+              raise SystemExit('Marketing remains blocked until every shipping model scores at least 85.')
+          print('All shipping models cleared the 85-point marketing threshold.')
+          PY
+
+      - name: Upload combined marketing gate
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Dialforge-Sales-Hard-v3-1-Combined
+          path: |
+            combined-report.json
+            summary.md
+          if-no-files-found: warn
+          retention-days: 30
