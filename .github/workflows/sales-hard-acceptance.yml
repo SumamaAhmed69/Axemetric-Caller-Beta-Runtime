@@ -1,4 +1,4 @@
-name: Sales Hard Acceptance v3
+name: Sales Hard Acceptance v3.1
 
 on:
   workflow_dispatch:
@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - "benchmarks/dialforge_sales_hard_acceptance.py"
+      - "benchmarks/dialforge_sales_hard_acceptance_v3_1.py"
       - ".github/workflows/sales-hard-acceptance.yml"
 
 permissions:
@@ -59,7 +60,7 @@ jobs:
         run: |
           set +e
           mkdir -p hard-sales-output
-          python benchmarks/dialforge_sales_hard_acceptance.py --output-dir hard-sales-output 2>&1 | tee hard-sales-output/run.log
+          python benchmarks/dialforge_sales_hard_acceptance_v3_1.py --output-dir hard-sales-output 2>&1 | tee hard-sales-output/run.log
           code=${PIPESTATUS[0]}
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           exit 0
@@ -74,7 +75,7 @@ jobs:
           from pathlib import Path
           p=Path('hard-sales-output/dialforge-sales-hard-v3.json')
           r=json.loads(p.read_text())
-          lines=['## Dialforge Sales Hard Acceptance v3','',f"Marketing gate: **{'PASS' if r['marketing_ready'] else 'BLOCKED'}**",'', '| Model | Score | Sales | Tools | Integrity | Critical |', '|---|---:|---:|---:|---:|---:|']
+          lines=['## Dialforge Sales Hard Acceptance v3.1','',f"Marketing gate: **{'PASS' if r['marketing_ready'] else 'BLOCKED'}**",'', '| Model | Score | Sales | Tools | Integrity | Critical |', '|---|---:|---:|---:|---:|---:|']
           for model,d in r['models'].items():
               lines.append(f"| {model} | {d['score']} | {d['sales']['score']} | {d['tools']['accuracy']} | {d['sales']['integrity']} | {d['sales']['critical_failures']} |")
           Path('hard-sales-output/summary.md').write_text('\n'.join(lines), encoding='utf-8')
@@ -89,7 +90,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Dialforge-Sales-Hard-v3
+          name: Dialforge-Sales-Hard-v3-1
           path: |
             hard-sales-output/dialforge-sales-hard-v3.json
             hard-sales-output/run.log
