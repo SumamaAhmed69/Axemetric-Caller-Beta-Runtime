@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - "runtime/dialforge_audio/**"
+      - "runtime/baresip-lineborn-windows.patch"
       - ".github/workflows/publish-direct-sip-runtime.yml"
 
 permissions:
@@ -46,6 +47,7 @@ jobs:
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
           git clone --depth 1 --branch %RE_TAG% https://github.com/baresip/re.git native\re
           git clone --depth 1 --branch %BARESIP_TAG% https://github.com/baresip/baresip.git native\baresip
+          git -C native\baresip apply "%GITHUB_WORKSPACE%\runtime\baresip-lineborn-windows.patch"
           cmake -S native\re -B native\re\build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLIBRE_BUILD_SHARED=OFF -DLIBRE_BUILD_STATIC=ON
           cmake --build native\re\build -j
           cmake -S native\baresip -B native\baresip\build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSTATIC=ON -DMODULES="account;auconv;auresamp;ctrl_tcp;g711;ice;menu;stun;turn;uuid" -DAPP_MODULES_DIR="%GITHUB_WORKSPACE%\runtime" -DAPP_MODULES="dialforge_audio"
@@ -135,9 +137,7 @@ jobs:
           $psi.CreateNoWindow = $true
           $psi.RedirectStandardOutput = $true
           $psi.RedirectStandardError = $true
-          $psi.ArgumentList.Add('-f')
-          $psi.ArgumentList.Add($cfgDir)
-          $psi.ArgumentList.Add('-c')
+          $psi.Environment['LINEBORN_BARESIP_CONFIG_DIR'] = $cfgDir
           $proc = [Diagnostics.Process]::new()
           $proc.StartInfo = $psi
           if (-not $proc.Start()) { throw 'Could not start Baresip smoke test' }
