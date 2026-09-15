@@ -5,7 +5,6 @@ on:
   push:
     paths:
       - "runtime/dialforge_audio/**"
-      - "runtime/baresip-lineborn-windows.patch"
       - ".github/workflows/publish-direct-sip-runtime.yml"
 
 permissions:
@@ -41,17 +40,53 @@ jobs:
           cmake --version
           ninja --version
 
+      - name: Clone native sources
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git clone --depth 1 --branch $env:RE_TAG https://github.com/baresip/re.git native/re
+          if ($LASTEXITCODE -ne 0) { throw 'Could not clone libre' }
+          git clone --depth 1 --branch $env:BARESIP_TAG https://github.com/baresip/baresip.git native/baresip
+          if ($LASTEXITCODE -ne 0) { throw 'Could not clone Baresip' }
+
+      - name: Patch Baresip Windows config path
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $path = 'native/baresip/src/main.c'
+          $text = Get-Content $path -Raw
+          $needle = "`ttmr_init(&tmr_quit);"
+          if (-not $text.Contains($needle)) { throw 'Could not locate Baresip timer initialization hook' }
+          $replacement = @'
+          	tmr_init(&tmr_quit);
+
+          	/*
+          	 * MSVC Windows builds do not provide getopt(), so Baresip's -f
+          	 * option is unavailable. Lineborn supplies its per-session config
+          	 * directory through this private environment variable instead.
+          	 */
+          	{
+          		const char *lineborn_conf_path =
+          			getenv("LINEBORN_BARESIP_CONFIG_DIR");
+          		if (lineborn_conf_path && *lineborn_conf_path)
+          			conf_path_set(lineborn_conf_path);
+          	}
+          '@
+          $text = $text.Replace($needle, $replacement)
+          Set-Content $path -Value $text -Encoding utf8 -NoNewline
+          if (-not (Select-String -Path $path -SimpleMatch 'LINEBORN_BARESIP_CONFIG_DIR' -Quiet)) {
+            throw 'Lineborn Baresip config hook was not applied'
+          }
+          Write-Host 'Lineborn Windows config-path hook applied.'
+
       - name: Build static Windows Baresip with Lineborn audio bridge
         shell: cmd
         run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-          git clone --depth 1 --branch %RE_TAG% https://github.com/baresip/re.git native\re
-          git clone --depth 1 --branch %BARESIP_TAG% https://github.com/baresip/baresip.git native\baresip
-          git -C native\baresip apply "%GITHUB_WORKSPACE%\runtime\baresip-lineborn-windows.patch"
-          cmake -S native\re -B native\re\build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLIBRE_BUILD_SHARED=OFF -DLIBRE_BUILD_STATIC=ON
-          cmake --build native\re\build -j
-          cmake -S native\baresip -B native\baresip\build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSTATIC=ON -DMODULES="account;auconv;auresamp;ctrl_tcp;g711;ice;menu;stun;turn;uuid" -DAPP_MODULES_DIR="%GITHUB_WORKSPACE%\runtime" -DAPP_MODULES="dialforge_audio"
-          cmake --build native\baresip\build -j
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat" || exit /b 1
+          cmake -S native\re -B native\re\build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLIBRE_BUILD_SHARED=OFF -DLIBRE_BUILD_STATIC=ON || exit /b 1
+          cmake --build native\re\build -j || exit /b 1
+          cmake -S native\baresip -B native\baresip\build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSTATIC=ON -DMODULES="account;auconv;auresamp;ctrl_tcp;g711;ice;menu;stun;turn;uuid" -DAPP_MODULES_DIR="%GITHUB_WORKSPACE%\runtime" -DAPP_MODULES="dialforge_audio" || exit /b 1
+          cmake --build native\baresip\build -j || exit /b 1
 
       - name: Assemble redistributable package
         shell: pwsh
