@@ -40,74 +40,53 @@ jobs:
           cmake --version
           ninja --version
 
-      - name: Build libre and Baresip with Lineborn audio bridge
+      - name: Build static Windows Baresip with Lineborn audio bridge
         shell: cmd
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
           git clone --depth 1 --branch %RE_TAG% https://github.com/baresip/re.git native\re
           git clone --depth 1 --branch %BARESIP_TAG% https://github.com/baresip/baresip.git native\baresip
-          cmake -S native\re -B native\re\build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake -S native\re -B native\re\build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLIBRE_BUILD_SHARED=OFF -DLIBRE_BUILD_STATIC=ON
           cmake --build native\re\build -j
-          cmake -S native\baresip -B native\baresip\build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSTATIC=OFF -DMODULES="account;auconv;auresamp;ctrl_tcp;g711;ice;menu;stun;turn;uuid" -DAPP_MODULES_DIR="%GITHUB_WORKSPACE%\runtime" -DAPP_MODULES="dialforge_audio"
+          cmake -S native\baresip -B native\baresip\build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSTATIC=ON -DMODULES="account;auconv;auresamp;ctrl_tcp;g711;ice;menu;stun;turn;uuid" -DAPP_MODULES_DIR="%GITHUB_WORKSPACE%\runtime" -DAPP_MODULES="dialforge_audio"
           cmake --build native\baresip\build -j
-          cmake --install native\re\build --prefix "%GITHUB_WORKSPACE%\stage"
-          cmake --install native\baresip\build --prefix "%GITHUB_WORKSPACE%\stage"
 
       - name: Assemble redistributable package
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $bin = Join-Path $PWD 'stage/bin'
-          $mods = Join-Path $PWD 'stage/lib/baresip/modules'
-          if (-not (Test-Path "$bin/baresip.exe")) {
-            $exe = Get-ChildItem native/baresip/build -Recurse -Filter baresip.exe | Select-Object -First 1
-            if (-not $exe) { throw 'baresip.exe was not built' }
-            New-Item -ItemType Directory -Force $bin | Out-Null
-            Copy-Item $exe.FullName "$bin/baresip.exe" -Force
-          }
-          New-Item -ItemType Directory -Force $mods | Out-Null
+          $package = Join-Path $PWD 'package'
+          $bin = Join-Path $package 'bin'
+          New-Item -ItemType Directory -Force $bin | Out-Null
 
-          foreach ($name in @('g711','auconv','auresamp','ctrl_tcp','account','menu','stun','turn','ice','uuid','dialforge_audio')) {
-            if (-not (Test-Path (Join-Path $mods "$name.dll"))) {
-              $dll = Get-ChildItem native/baresip/build -Recurse -Filter "$name.dll" | Select-Object -First 1
-              if (-not $dll) { throw "Required Baresip module missing: $name.dll" }
-              Copy-Item $dll.FullName $mods -Force
-            }
-          }
+          $exe = Get-ChildItem native/baresip/build -Recurse -Filter baresip.exe | Select-Object -First 1
+          if (-not $exe) { throw 'baresip.exe was not built' }
+          Copy-Item $exe.FullName "$bin/baresip.exe" -Force
 
-          $searchRoots = @(
-            'stage',
-            'native/re/build',
-            'native/baresip/build',
+          $opensslRoots = @(
             'C:/Program Files/OpenSSL/bin',
             'C:/Program Files/OpenSSL-Win64/bin'
           ) | Where-Object { Test-Path $_ }
-          foreach ($pattern in @('re.dll','baresip.dll','libbaresip*.dll','libssl*.dll','libcrypto*.dll')) {
-            $found = @(
-              Get-ChildItem $searchRoots -Recurse -Filter $pattern -ErrorAction SilentlyContinue |
-              Sort-Object FullName -Unique
-            )
+          foreach ($pattern in @('libssl*.dll','libcrypto*.dll')) {
+            $found = @(Get-ChildItem $opensslRoots -Filter $pattern -ErrorAction SilentlyContinue | Sort-Object FullName -Unique)
+            if (-not $found) { throw "OpenSSL runtime dependency missing: $pattern" }
             foreach ($file in $found) {
-              $target = Join-Path $bin $file.Name
-              if (-not (Test-Path $target)) { Copy-Item $file.FullName $target -Force }
+              Copy-Item $file.FullName (Join-Path $bin $file.Name) -Force
             }
           }
 
-          if (-not (Test-Path "$bin/re.dll")) { throw 're.dll is missing from the SIP package' }
-          $baresipRuntime = @(Get-ChildItem $bin -Filter '*baresip*.dll' -ErrorAction SilentlyContinue)
-          if (-not $baresipRuntime) { throw 'Baresip runtime DLL is missing from the SIP package' }
-
-          Copy-Item native/baresip/LICENSE stage/BARESIP-LICENSE.txt -Force
-          Copy-Item native/re/LICENSE stage/LIBRE-LICENSE.txt -Force
+          Copy-Item native/baresip/LICENSE "$package/BARESIP-LICENSE.txt" -Force
+          Copy-Item native/re/LICENSE "$package/LIBRE-LICENSE.txt" -Force
           @'
           Lineborn Direct SIP runtime
           Baresip v4.10.0 + libre v4.10.0
           Baresip/libre are redistributed under their BSD licenses.
-          Lineborn's custom dialforge_audio module exchanges PCM only over 127.0.0.1.
-          '@ | Set-Content stage/LINEBORN-SIP-RUNTIME.txt -Encoding utf8
+          The required Baresip modules and Lineborn's dialforge_audio PCM bridge are statically linked into baresip.exe.
+          The audio bridge exchanges PCM only over 127.0.0.1.
+          '@ | Set-Content "$package/LINEBORN-SIP-RUNTIME.txt" -Encoding utf8
 
           Write-Host 'Packaged files:'
-          Get-ChildItem stage -Recurse | Select-Object FullName,Length
+          Get-ChildItem $package -Recurse | Select-Object FullName,Length
 
       - name: Smoke test Direct SIP sidecar
         shell: pwsh
@@ -115,7 +94,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $cfgDir = Join-Path $PWD 'smoke-config'
           New-Item -ItemType Directory -Force $cfgDir | Out-Null
-          $mods = (Resolve-Path 'stage/lib/baresip/modules').Path
+          $modulePath = (Resolve-Path 'package/bin').Path
           @"
           call_max_calls 1
           call_accept no
@@ -129,11 +108,14 @@ jobs:
           auplay_format s16
           auenc_format s16
           audec_format s16
-          module_path $mods
+          module_path $modulePath
           module g711.dll
           module auconv.dll
           module auresamp.dll
           module dialforge_audio.dll
+          module stun.dll
+          module turn.dll
+          module ice.dll
           module_app account.dll
           module_app menu.dll
           module_app ctrl_tcp.dll
@@ -146,11 +128,11 @@ jobs:
           "@ | Set-Content "$cfgDir/config" -Encoding ascii
           '' | Set-Content "$cfgDir/accounts" -Encoding ascii
 
-          $env:PATH = "$(Resolve-Path 'stage/bin');$env:PATH"
-          $proc = Start-Process -FilePath (Resolve-Path 'stage/bin/baresip.exe') -ArgumentList @('-f', $cfgDir) -PassThru -RedirectStandardOutput smoke-out.log -RedirectStandardError smoke-err.log
+          $env:PATH = "$(Resolve-Path 'package/bin');$env:PATH"
+          $proc = Start-Process -FilePath (Resolve-Path 'package/bin/baresip.exe') -ArgumentList @('-f', $cfgDir) -PassThru -RedirectStandardOutput smoke-out.log -RedirectStandardError smoke-err.log
           try {
             $ready = $false
-            for ($i=0; $i -lt 80; $i++) {
+            for ($i=0; $i -lt 120; $i++) {
               if ($proc.HasExited) { break }
               try {
                 $tcp = New-Object Net.Sockets.TcpClient
@@ -176,7 +158,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
-          Compress-Archive -Path stage/* -DestinationPath $env:SIP_ASSET -CompressionLevel Optimal -Force
+          Compress-Archive -Path package/* -DestinationPath $env:SIP_ASSET -CompressionLevel Optimal -Force
           $sha = (Get-FileHash $env:SIP_ASSET -Algorithm SHA256).Hash.ToLowerInvariant()
           $size = (Get-Item $env:SIP_ASSET).Length
 
@@ -202,7 +184,7 @@ jobs:
               'sha256': os.environ['SIP_SHA'],
               'size': int(os.environ['SIP_SIZE']),
               'profiles': ['compatibility','balanced','performance'],
-              'engine': 'baresip',
+              'engine': 'baresip-static',
               'version': '4.10.0',
           })
           doc['version'] = os.environ['RUNTIME_VERSION']
@@ -227,4 +209,5 @@ jobs:
           foreach ($profile in @('compatibility','balanced','performance')) {
             if ($sip[0].profiles -notcontains $profile) { throw "SIP package missing profile $profile" }
           }
+          if ($sip[0].engine -ne 'baresip-static') { throw "Unexpected SIP engine: $($sip[0].engine)" }
           Write-Host 'Lineborn beta.8 Direct SIP runtime is published and verified.'
