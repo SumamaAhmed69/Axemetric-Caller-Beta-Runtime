@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "runtime/chatterbox_bridge.py"
+      - ".github/workflows/publish-chatterbox-runtime.yml"
   workflow_dispatch:
 
 permissions:
@@ -35,13 +36,14 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           python -m pip install --upgrade pip wheel setuptools
-          pip install pyinstaller fastapi uvicorn pydantic huggingface_hub
+          pip install pyinstaller fastapi uvicorn pydantic huggingface_hub requests packaging filelock regex tqdm safetensors importlib_metadata
           pip install torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cpu
           pip install chatterbox-tts
           pip install --force-reinstall --no-deps $env:PERTH_SOURCE
           pip install --force-reinstall --no-deps $env:CHATTERBOX_SOURCE
           @'
           import inspect
+          import importlib.metadata as md
           import perth
           from chatterbox.tts_turbo import ChatterboxTurboTTS
           sig = inspect.signature(ChatterboxTurboTTS.from_pretrained)
@@ -49,10 +51,53 @@ jobs:
               raise SystemExit('Pinned Chatterbox source does not expose Nano support')
           if perth.PerthImplicitWatermarker is None:
               raise SystemExit('Perth watermark support unavailable')
-          print('Chatterbox Nano and Perth watermark support verified.')
+          for package in ('requests', 'packaging', 'filelock', 'regex', 'tqdm', 'safetensors', 'huggingface-hub', 'diffusers', 'transformers'):
+              print(package, md.version(package))
+          print('Chatterbox Nano, Perth watermark support and dependency metadata verified.')
           '@ | python -
-          python -m PyInstaller --noconfirm --clean --onedir --noconsole --name chatterbox-server --distpath dist --workpath work --specpath spec --collect-all chatterbox --collect-all perth --collect-all torch --collect-all torchaudio runtime/chatterbox_bridge.py
+          python -m PyInstaller --noconfirm --clean --onedir --noconsole --name chatterbox-server --distpath dist --workpath work --specpath spec --collect-all chatterbox --collect-all perth --collect-all torch --collect-all torchaudio --recursive-copy-metadata diffusers --recursive-copy-metadata transformers --copy-metadata requests --copy-metadata packaging --copy-metadata filelock --copy-metadata regex --copy-metadata tqdm --copy-metadata safetensors --copy-metadata huggingface-hub --copy-metadata importlib_metadata runtime/chatterbox_bridge.py
           if (-not (Test-Path 'dist/chatterbox-server/chatterbox-server.exe')) { throw 'Chatterbox executable missing' }
+
+      - name: Smoke test packaged Chatterbox server
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $smokeRoot = Join-Path $env:RUNNER_TEMP 'lineborn-chatterbox-smoke'
+          New-Item -ItemType Directory -Force $smokeRoot | Out-Null
+          $env:AXEMETRIC_DATA_ROOT = $smokeRoot
+          $env:AXEMETRIC_CHATTERBOX_PORT = '18881'
+          $stdout = Join-Path $smokeRoot 'stdout.log'
+          $stderr = Join-Path $smokeRoot 'stderr.log'
+          $exe = (Resolve-Path 'dist/chatterbox-server/chatterbox-server.exe').Path
+          $proc = Start-Process -FilePath $exe -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          $ready = $false
+          try {
+            for ($i = 0; $i -lt 120; $i++) {
+              Start-Sleep -Seconds 1
+              if ($proc.HasExited) {
+                $out = if (Test-Path $stdout) { Get-Content $stdout -Raw } else { '' }
+                $err = if (Test-Path $stderr) { Get-Content $stderr -Raw } else { '' }
+                throw "Packaged Chatterbox exited before health became ready. Exit=$($proc.ExitCode)`nSTDOUT:`n$out`nSTDERR:`n$err"
+              }
+              try {
+                $health = Invoke-RestMethod -Uri 'http://127.0.0.1:18881/health' -TimeoutSec 3
+                if ($health.ok -eq $true) {
+                  $ready = $true
+                  Write-Host "Packaged Chatterbox health passed: device=$($health.device), nano=$($health.nano)"
+                  break
+                }
+              } catch {
+                # Keep waiting while Python imports the packaged ML stack.
+              }
+            }
+            if (-not $ready) {
+              $out = if (Test-Path $stdout) { Get-Content $stdout -Raw } else { '' }
+              $err = if (Test-Path $stderr) { Get-Content $stderr -Raw } else { '' }
+              throw "Packaged Chatterbox did not become healthy within 120 seconds.`nSTDOUT:`n$out`nSTDERR:`n$err"
+            }
+          } finally {
+            if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+          }
 
       - name: Package runtime and patch manifest
         shell: pwsh
