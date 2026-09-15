@@ -58,19 +58,19 @@ jobs:
           $needle = "`ttmr_init(&tmr_quit);"
           if (-not $text.Contains($needle)) { throw 'Could not locate Baresip timer initialization hook' }
           $replacement = @'
-          	tmr_init(&tmr_quit);
+          \ttmr_init(&tmr_quit);
 
-          	/*
-          	 * MSVC Windows builds do not provide getopt(), so Baresip's -f
-          	 * option is unavailable. Lineborn supplies its per-session config
-          	 * directory through this private environment variable instead.
-          	 */
-          	{
-          		const char *lineborn_conf_path =
-          			getenv("LINEBORN_BARESIP_CONFIG_DIR");
-          		if (lineborn_conf_path && *lineborn_conf_path)
-          			conf_path_set(lineborn_conf_path);
-          	}
+          \t/*
+          \t * MSVC Windows builds do not provide getopt(), so Baresip's -f
+          \t * option is unavailable. Lineborn supplies its per-session config
+          \t * directory through this private environment variable instead.
+          \t */
+          \t{
+          \t\tconst char *lineborn_conf_path =
+          \t\t\tgetenv("LINEBORN_BARESIP_CONFIG_DIR");
+          \t\tif (lineborn_conf_path && *lineborn_conf_path)
+          \t\t\tconf_path_set(lineborn_conf_path);
+          \t}
           '@
           $text = $text.Replace($needle, $replacement)
           Set-Content $path -Value $text -Encoding utf8 -NoNewline
@@ -240,11 +240,11 @@ jobs:
           doc['version'] = os.environ['RUNTIME_VERSION']
           doc['generated_at'] = datetime.now(timezone.utc).isoformat()
           doc['packages'] = packages
-          Path('work/manifest-lineborn.json').write_text(json.dumps(doc, indent=2), encoding='utf-8')
+          p.write_text(json.dumps(doc, indent=2), encoding='utf-8')
           '@ | python -
 
           gh release upload $env:RELEASE_TAG $env:SIP_ASSET --clobber
-          gh release upload $env:RELEASE_TAG work/manifest-lineborn.json#manifest.json --clobber
+          gh release upload $env:RELEASE_TAG work/manifest.json --clobber
           if ($LASTEXITCODE -ne 0) { throw 'Could not publish Lineborn Direct SIP runtime' }
 
       - name: Verify published runtime
