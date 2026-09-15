@@ -48,7 +48,7 @@ jobs:
           git clone --depth 1 --branch %BARESIP_TAG% https://github.com/baresip/baresip.git native\baresip
           cmake -S native\re -B native\re\build -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build native\re\build -j
-          cmake -S native\baresip -B native\baresip\build -G Ninja -DCMAKE_BUILD_TYPE=Release -DMODULES="account;auconv;auresamp;ctrl_tcp;g711;ice;menu;stun;turn;uuid" -DAPP_MODULES_DIR="%GITHUB_WORKSPACE%\runtime" -DAPP_MODULES="dialforge_audio"
+          cmake -S native\baresip -B native\baresip\build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSTATIC=OFF -DMODULES="account;auconv;auresamp;ctrl_tcp;g711;ice;menu;stun;turn;uuid" -DAPP_MODULES_DIR="%GITHUB_WORKSPACE%\runtime" -DAPP_MODULES="dialforge_audio"
           cmake --build native\baresip\build -j
           cmake --install native\re\build --prefix "%GITHUB_WORKSPACE%\stage"
           cmake --install native\baresip\build --prefix "%GITHUB_WORKSPACE%\stage"
@@ -75,9 +75,16 @@ jobs:
             }
           }
 
-          foreach ($pattern in @('re.dll','baresip.dll','libssl*.dll','libcrypto*.dll')) {
+          $searchRoots = @(
+            'stage',
+            'native/re/build',
+            'native/baresip/build',
+            'C:/Program Files/OpenSSL/bin',
+            'C:/Program Files/OpenSSL-Win64/bin'
+          ) | Where-Object { Test-Path $_ }
+          foreach ($pattern in @('re.dll','baresip.dll','libbaresip*.dll','libssl*.dll','libcrypto*.dll')) {
             $found = @(
-              Get-ChildItem stage,native/re/build,native/baresip/build,'C:/Program Files/OpenSSL-Win64/bin' -Recurse -Filter $pattern -ErrorAction SilentlyContinue |
+              Get-ChildItem $searchRoots -Recurse -Filter $pattern -ErrorAction SilentlyContinue |
               Sort-Object FullName -Unique
             )
             foreach ($file in $found) {
@@ -85,6 +92,10 @@ jobs:
               if (-not (Test-Path $target)) { Copy-Item $file.FullName $target -Force }
             }
           }
+
+          if (-not (Test-Path "$bin/re.dll")) { throw 're.dll is missing from the SIP package' }
+          $baresipRuntime = @(Get-ChildItem $bin -Filter '*baresip*.dll' -ErrorAction SilentlyContinue)
+          if (-not $baresipRuntime) { throw 'Baresip runtime DLL is missing from the SIP package' }
 
           Copy-Item native/baresip/LICENSE stage/BARESIP-LICENSE.txt -Force
           Copy-Item native/re/LICENSE stage/LIBRE-LICENSE.txt -Force
@@ -135,6 +146,7 @@ jobs:
           "@ | Set-Content "$cfgDir/config" -Encoding ascii
           '' | Set-Content "$cfgDir/accounts" -Encoding ascii
 
+          $env:PATH = "$(Resolve-Path 'stage/bin');$env:PATH"
           $proc = Start-Process -FilePath (Resolve-Path 'stage/bin/baresip.exe') -ArgumentList @('-f', $cfgDir) -PassThru -RedirectStandardOutput smoke-out.log -RedirectStandardError smoke-err.log
           try {
             $ready = $false
