@@ -1,0 +1,15 @@
+diff --git a/src/main.c b/src/main.c
+index 56e8f98..lineborn 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -124,6 +124,12 @@ int main(int argc, char *argv[])
+ 	tmr_init(&tmr_quit);
++
++	/* MSVC builds do not have getopt, so -f is unavailable on Windows. */
++	const char *lineborn_conf_path = getenv("LINEBORN_BARESIP_CONFIG_DIR");
++	if (lineborn_conf_path && *lineborn_conf_path) {
++		conf_path_set(lineborn_conf_path);
++	}
+ 
+ #ifdef HAVE_GETOPT
+ 	for (;;) {
