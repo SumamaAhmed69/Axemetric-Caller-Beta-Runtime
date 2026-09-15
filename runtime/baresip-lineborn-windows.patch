@@ -1,5 +1,4 @@
 diff --git a/src/main.c b/src/main.c
-index 56e8f98..lineborn 100644
 --- a/src/main.c
 +++ b/src/main.c
 @@ -124,6 +124,12 @@ int main(int argc, char *argv[])
