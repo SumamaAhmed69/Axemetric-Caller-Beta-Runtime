@@ -1,4 +1,4 @@
-name: Publish Direct SIP Runtime
+name: Publish Lineborn Direct SIP Runtime
 
 on:
   workflow_dispatch:
@@ -11,15 +11,15 @@ permissions:
   contents: write
 
 concurrency:
-  group: axemetric-direct-sip-runtime
+  group: lineborn-direct-sip-runtime
   cancel-in-progress: false
 
 env:
   RELEASE_TAG: "beta-v20.4.0"
-  RUNTIME_VERSION: "20.4.0-beta.4"
+  RUNTIME_VERSION: "20.4.0-beta.8"
   BARESIP_TAG: "v4.10.0"
   RE_TAG: "v4.10.0"
-  SIP_ASSET: "dialforge-sip-v4.10.0.zip"
+  SIP_ASSET: "lineborn-sip-v4.10.0.zip"
 
 jobs:
   publish-direct-sip:
@@ -40,7 +40,7 @@ jobs:
           cmake --version
           ninja --version
 
-      - name: Build libre and Baresip with Dialforge audio bridge
+      - name: Build libre and Baresip with Lineborn audio bridge
         shell: cmd
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
@@ -89,11 +89,11 @@ jobs:
           Copy-Item native/baresip/LICENSE stage/BARESIP-LICENSE.txt -Force
           Copy-Item native/re/LICENSE stage/LIBRE-LICENSE.txt -Force
           @'
-          Dialforge Direct SIP runtime
+          Lineborn Direct SIP runtime
           Baresip v4.10.0 + libre v4.10.0
           Baresip/libre are redistributed under their BSD licenses.
-          Dialforge's custom dialforge_audio module exchanges PCM only over 127.0.0.1.
-          '@ | Set-Content stage/DIALFORGE-SIP-RUNTIME.txt -Encoding utf8
+          Lineborn's custom dialforge_audio module exchanges PCM only over 127.0.0.1.
+          '@ | Set-Content stage/LINEBORN-SIP-RUNTIME.txt -Encoding utf8
 
           Write-Host 'Packaged files:'
           Get-ChildItem stage -Recurse | Select-Object FullName,Length
@@ -153,12 +153,12 @@ jobs:
               Get-Content smoke-err.log -ErrorAction SilentlyContinue
               throw 'Baresip Direct SIP control socket did not become ready'
             }
-            Write-Host 'Direct SIP sidecar smoke test passed.'
+            Write-Host 'Lineborn Direct SIP sidecar smoke test passed.'
           } finally {
             if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
           }
 
-      - name: Publish Direct SIP package and beta.4 manifest
+      - name: Publish Direct SIP package and manifest
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -196,14 +196,14 @@ jobs:
           doc['version'] = os.environ['RUNTIME_VERSION']
           doc['generated_at'] = datetime.now(timezone.utc).isoformat()
           doc['packages'] = packages
-          Path('work/manifest-beta4.json').write_text(json.dumps(doc, indent=2), encoding='utf-8')
+          Path('work/manifest-lineborn.json').write_text(json.dumps(doc, indent=2), encoding='utf-8')
           '@ | python -
 
           gh release upload $env:RELEASE_TAG $env:SIP_ASSET --clobber
-          gh release upload $env:RELEASE_TAG work/manifest-beta4.json#manifest.json --clobber
-          if ($LASTEXITCODE -ne 0) { throw 'Could not publish Direct SIP runtime' }
+          gh release upload $env:RELEASE_TAG work/manifest-lineborn.json#manifest.json --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Could not publish Lineborn Direct SIP runtime' }
 
-      - name: Verify published beta.4 runtime
+      - name: Verify published runtime
         shell: pwsh
         run: |
           $url = "https://github.com/SumamaAhmed69/Axemetric-Caller-Beta-Runtime/releases/download/$env:RELEASE_TAG/manifest.json"
@@ -215,4 +215,4 @@ jobs:
           foreach ($profile in @('compatibility','balanced','performance')) {
             if ($sip[0].profiles -notcontains $profile) { throw "SIP package missing profile $profile" }
           }
-          Write-Host 'Dialforge beta.4 Direct SIP runtime is published and verified.'
+          Write-Host 'Lineborn beta.8 Direct SIP runtime is published and verified.'
