@@ -1,0 +1,86 @@
+name: Validate Lineborn Colab runtime
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'colab/lineborn_colab_runtime.py'
+      - 'colab/lineborn_colab_bootstrap.py'
+      - 'colab/Lineborn_PreRelease_Runtime.ipynb'
+      - '.github/workflows/validate-lineborn-colab-runtime.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  static-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile runtime sources
+        run: |
+          set -euo pipefail
+          python -m py_compile colab/lineborn_colab_runtime.py colab/lineborn_colab_bootstrap.py
+      - name: Validate notebook and runtime contract
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          notebook_path = Path('colab/Lineborn_PreRelease_Runtime.ipynb')
+          notebook = json.loads(notebook_path.read_text('utf-8'))
+          assert notebook.get('nbformat') == 4
+          source = '\n'.join(
+              ''.join(cell.get('source') or [])
+              for cell in notebook.get('cells') or []
+          )
+          runtime = Path('colab/lineborn_colab_runtime.py').read_text('utf-8')
+          bootstrap = Path('colab/lineborn_colab_bootstrap.py').read_text('utf-8')
+
+          required_notebook = [
+              'LINEBORN COLAB RUNTIME READY',
+              '/lineborn/benchmark',
+              'lineborn-prerelease-benchmark.json',
+              'STRICT PRE-RELEASE RESULT',
+          ]
+          for token in required_notebook:
+              assert token in source, token
+
+          required_runtime = [
+              '@app.get("/lineborn/health")',
+              '@app.post("/lineborn/voice-reference")',
+              '@app.post("/lineborn/warmup")',
+              '@app.post("/lineborn/benchmark")',
+              '@app.get("/lineborn/benchmark/latest")',
+              'MAX_TRANSCRIPTION_BYTES = 16 * 1024 * 1024',
+              'secrets.compare_digest',
+              '"errors_max": 0',
+              '"llm_ttft_median_max_ms": 1200.0',
+              '"voice_start_p95_max_ms": 4500.0',
+              '"stt_wer_median_max": 0.18',
+              '"tts_rtf_median_max": 0.70',
+          ]
+          for token in required_runtime:
+              assert token in runtime, token
+
+          assert 'LINEBORN_COMPANION_TOKEN' in bootstrap
+          assert 'lineborn_colab_runtime:app' in bootstrap
+          assert 'trycloudflare.com' in bootstrap
+          assert '>= 20_000' in bootstrap
+          assert '>= 11_500' in bootstrap
+
+          # Public runtime must never contain application/carrier credentials.
+          forbidden = ['SIP_PASSWORD=', 'LIVEKIT_API_SECRET=', 'AXEMETRIC_CONTROL_TOKEN=']
+          for token in forbidden:
+              assert token not in runtime
+              assert token not in bootstrap
+              assert token not in source
+
+          print('Lineborn Colab pre-release runtime static contract: PASS')
+          PY
