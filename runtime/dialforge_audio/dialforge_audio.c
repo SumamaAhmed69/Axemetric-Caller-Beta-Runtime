@@ -9,7 +9,7 @@
 #include <rem.h>
 #include <baresip.h>
 #include <re_atomic.h>
-#include <threads.h>
+#include <re_thread.h>
 #include <string.h>
 
 #define DF_MAGIC0 'D'
