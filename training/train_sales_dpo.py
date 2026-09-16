@@ -46,7 +46,7 @@ def main() -> int:
         args.base_model,
         quantization_config=quant,
         device_map={"": 0},
-        torch_dtype=compute_dtype,
+        dtype=compute_dtype,
     )
     base.config.use_cache = False
     model = PeftModel.from_pretrained(base, args.adapter, is_trainable=True)
