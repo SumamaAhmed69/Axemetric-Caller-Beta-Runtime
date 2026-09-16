@@ -9,6 +9,8 @@ on:
       - 'colab/lineborn_colab_bootstrap.py'
       - 'colab/Lineborn_PreRelease_Runtime.ipynb'
       - 'benchmarks/lineborn_strict_colab_bootstrap.py'
+      - 'benchmarks/lineborn_release_acceptance_v5.py'
+      - 'benchmarks/dialforge_spoken_safety.py'
       - 'benchmarks/Lineborn_Strict_PreRelease_Colab.ipynb'
       - '.github/workflows/validate-lineborn-colab-runtime.yml'
 
@@ -30,7 +32,9 @@ jobs:
           python -m py_compile \
             colab/lineborn_colab_runtime.py \
             colab/lineborn_colab_bootstrap.py \
-            benchmarks/lineborn_strict_colab_bootstrap.py
+            benchmarks/lineborn_strict_colab_bootstrap.py \
+            benchmarks/lineborn_release_acceptance_v5.py \
+            benchmarks/dialforge_spoken_safety.py
       - name: Validate notebooks and runtime contract
         run: |
           set -euo pipefail
@@ -48,6 +52,8 @@ jobs:
           runtime = Path('colab/lineborn_colab_runtime.py').read_text('utf-8')
           bootstrap = Path('colab/lineborn_colab_bootstrap.py').read_text('utf-8')
           direct_bootstrap = Path('benchmarks/lineborn_strict_colab_bootstrap.py').read_text('utf-8')
+          v5 = Path('benchmarks/lineborn_release_acceptance_v5.py').read_text('utf-8')
+          spoken = Path('benchmarks/dialforge_spoken_safety.py').read_text('utf-8')
 
           for token in [
               'LINEBORN COLAB RUNTIME READY',
@@ -87,7 +93,7 @@ jobs:
               'LINEBORN STRICT PRE-RELEASE',
           ]:
               assert token in direct_source, token
-          assert 'dialforge_final_release_acceptance_v4_kaggle.py' in direct_bootstrap
+          assert 'lineborn_release_acceptance_v5.py' in direct_bootstrap
           assert 'direct-colab-no-desktop' in direct_bootstrap
           assert 'qwen3:1.7b' in direct_bootstrap
           assert 'qwen3:4b-instruct' in direct_bootstrap
@@ -95,11 +101,29 @@ jobs:
           assert 'trycloudflare' not in direct_bootstrap
           assert 'LINEBORN_COMPANION_TOKEN' not in direct_bootstrap
 
+          # v5 specifically closes the false-green speech leak hole.
+          for token in [
+              'raw_control_leak_attempts',
+              'spoken_control_leaks',
+              'spoken_safety_regression',
+              'record_outcome',
+              'authority_gatekeeper',
+              'impact_required',
+              '_small_model_control_safe_prompt',
+          ]:
+              assert token in v5, token
+          for token in [
+              'contains_internal_control_text',
+              '_INTERNAL_CONTROL_LEAK',
+              '_INTERNAL_CONTROL_FALLBACK',
+          ]:
+              assert token in spoken, token
+
           # Public benchmark/runtime must never contain application/carrier credentials.
           forbidden = ['SIP_PASSWORD=', 'LIVEKIT_API_SECRET=', 'AXEMETRIC_CONTROL_TOKEN=']
           for token in forbidden:
-              for text in (runtime, bootstrap, runtime_source, direct_bootstrap, direct_source):
+              for text in (runtime, bootstrap, runtime_source, direct_bootstrap, direct_source, v5, spoken):
                   assert token not in text
 
-          print('Lineborn Colab runtime + direct pre-release benchmark static contract: PASS')
+          print('Lineborn Colab runtime + fail-closed v5 benchmark static contract: PASS')
           PY
