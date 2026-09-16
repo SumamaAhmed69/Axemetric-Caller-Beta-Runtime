@@ -8,6 +8,8 @@ on:
       - 'colab/lineborn_colab_runtime.py'
       - 'colab/lineborn_colab_bootstrap.py'
       - 'colab/Lineborn_PreRelease_Runtime.ipynb'
+      - 'benchmarks/lineborn_strict_colab_bootstrap.py'
+      - 'benchmarks/Lineborn_Strict_PreRelease_Colab.ipynb'
       - '.github/workflows/validate-lineborn-colab-runtime.yml'
 
 permissions:
@@ -25,34 +27,37 @@ jobs:
       - name: Compile runtime sources
         run: |
           set -euo pipefail
-          python -m py_compile colab/lineborn_colab_runtime.py colab/lineborn_colab_bootstrap.py
-      - name: Validate notebook and runtime contract
+          python -m py_compile \
+            colab/lineborn_colab_runtime.py \
+            colab/lineborn_colab_bootstrap.py \
+            benchmarks/lineborn_strict_colab_bootstrap.py
+      - name: Validate notebooks and runtime contract
         run: |
           set -euo pipefail
           python - <<'PY'
           import json
           from pathlib import Path
 
-          notebook_path = Path('colab/Lineborn_PreRelease_Runtime.ipynb')
-          notebook = json.loads(notebook_path.read_text('utf-8'))
-          assert notebook.get('nbformat') == 4
-          source = '\n'.join(
-              ''.join(cell.get('source') or [])
-              for cell in notebook.get('cells') or []
-          )
+          runtime_nb = json.loads(Path('colab/Lineborn_PreRelease_Runtime.ipynb').read_text('utf-8'))
+          direct_nb = json.loads(Path('benchmarks/Lineborn_Strict_PreRelease_Colab.ipynb').read_text('utf-8'))
+          assert runtime_nb.get('nbformat') == 4
+          assert direct_nb.get('nbformat') == 4
+
+          runtime_source = '\n'.join(''.join(c.get('source') or []) for c in runtime_nb.get('cells') or [])
+          direct_source = '\n'.join(''.join(c.get('source') or []) for c in direct_nb.get('cells') or [])
           runtime = Path('colab/lineborn_colab_runtime.py').read_text('utf-8')
           bootstrap = Path('colab/lineborn_colab_bootstrap.py').read_text('utf-8')
+          direct_bootstrap = Path('benchmarks/lineborn_strict_colab_bootstrap.py').read_text('utf-8')
 
-          required_notebook = [
+          for token in [
               'LINEBORN COLAB RUNTIME READY',
               '/lineborn/benchmark',
               'lineborn-prerelease-benchmark.json',
               'STRICT PRE-RELEASE RESULT',
-          ]
-          for token in required_notebook:
-              assert token in source, f'notebook missing: {token}'
+          ]:
+              assert token in runtime_source, token
 
-          required_runtime = [
+          for token in [
               '@app.get("/lineborn/health")',
               '@app.post("/lineborn/voice-reference")',
               '@app.post("/lineborn/warmup")',
@@ -65,22 +70,36 @@ jobs:
               '"voice_start_p95_max_ms": 4500.0',
               '"stt_wer_median_max": 0.18',
               '"tts_rtf_median_max": 0.70',
-          ]
-          for token in required_runtime:
-              assert token in runtime, f'runtime missing: {token}'
+          ]:
+              assert token in runtime, token
 
-          assert 'LINEBORN_COMPANION_TOKEN' in bootstrap, 'bootstrap token contract missing'
-          assert 'lineborn_colab_runtime:app' in bootstrap, 'bootstrap worker target missing'
-          assert 'trycloudflare' in bootstrap, 'Cloudflare tunnel contract missing'
-          assert '>= 20_000' in bootstrap, 'performance VRAM tier missing'
-          assert '>= 11_500' in bootstrap, 'balanced VRAM tier missing'
+          assert 'LINEBORN_COMPANION_TOKEN' in bootstrap
+          assert 'lineborn_colab_runtime:app' in bootstrap
+          assert 'trycloudflare.com' in bootstrap
+          assert 'vram_mb >= 20_000' in bootstrap
+          assert 'vram_mb >= 11_500' in bootstrap
 
-          # Public runtime must never contain application/carrier credentials.
+          # Direct benchmark must not require desktop pairing or a tunnel.
+          for token in [
+              'Lineborn — Strict Pre-Release Benchmark (Direct Colab)',
+              'lineborn_strict_colab_bootstrap.py',
+              'lineborn-strict-prerelease.json',
+              'LINEBORN STRICT PRE-RELEASE',
+          ]:
+              assert token in direct_source, token
+          assert 'dialforge_final_release_acceptance_v4_kaggle.py' in direct_bootstrap
+          assert 'direct-colab-no-desktop' in direct_bootstrap
+          assert 'qwen3:1.7b' in direct_bootstrap
+          assert 'qwen3:4b-instruct' in direct_bootstrap
+          assert 'qwen3:4b-instruct-2507-q8_0' in direct_bootstrap
+          assert 'trycloudflare.com' not in direct_bootstrap
+          assert 'LINEBORN_COMPANION_TOKEN' not in direct_bootstrap
+
+          # Public benchmark/runtime must never contain application/carrier credentials.
           forbidden = ['SIP_PASSWORD=', 'LIVEKIT_API_SECRET=', 'AXEMETRIC_CONTROL_TOKEN=']
           for token in forbidden:
-              assert token not in runtime, f'forbidden runtime token: {token}'
-              assert token not in bootstrap, f'forbidden bootstrap token: {token}'
-              assert token not in source, f'forbidden notebook token: {token}'
+              for text in (runtime, bootstrap, runtime_source, direct_bootstrap, direct_source):
+                  assert token not in text
 
-          print('Lineborn Colab pre-release runtime static contract: PASS')
+          print('Lineborn Colab runtime + direct pre-release benchmark static contract: PASS')
           PY
