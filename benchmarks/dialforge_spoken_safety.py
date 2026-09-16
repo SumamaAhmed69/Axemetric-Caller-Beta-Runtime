@@ -4,7 +4,7 @@ import re
 
 # Public benchmark mirror of the action-integrity subset in the shipping
 # engine/axemetric/voice_guard.py. Raw model output is still scored separately;
-# this only models what Dialforge would actually allow to reach TTS.
+# this only models what Lineborn would actually allow to reach TTS.
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 _FUTURE_SUBJECT = r"(?:i|we)(?:(?:['’]\s*|\s+)(?:ll|will))\s+"
 _PAST_SUBJECT = r"(?:i|we)(?:(?:['’]\s*|\s+)(?:ve|have))\s+"
@@ -29,9 +29,29 @@ _BOOKING_CLAIM = re.compile(
     re.IGNORECASE,
 )
 
+# Anything matching this expression is implementation/control-plane language and
+# must never cross the TTS boundary. The Compatibility 1.7B model was observed
+# echoing these instructions verbatim during strict pre-release testing.
+_INTERNAL_CONTROL_LEAK = re.compile(
+    r"\b(?:record_outcome|book_meeting|mark_do_not_call|request_human_follow_up)\b|"
+    r"\b(?:tool[_\s-]?(?:name|arguments|call|trigger)|mandatory\s+tool\s+router|private\s+call\s+control\s+rules|"
+    r"(?:dialforge|lineborn)\s+turn\s+decision\s+card|decision\s+card|action\s+priority|sales\s+priority|small-model\s+mode)\b|"
+    r"\bcall\s+(?:record_outcome|book_meeting|mark_do_not_call|request_human_follow_up)\b|"
+    r"\b(?:do\s+not|don't)\s+(?:reopen\s+discovery|keep\s+selling|output\s+control\s+text)\b|"
+    r"\buse\s+the\s+first\s+applicable\s+action\s+rule(?:\s+and\s+stop)?\b|"
+    r"<tool(?:\s|>)",
+    re.IGNORECASE,
+)
+_INTERNAL_CONTROL_FALLBACK = "Understood."
+
 
 def _clean(text: str) -> str:
     return re.sub(r"\s+", " ", str(text or "")).strip()
+
+
+def contains_internal_control_text(text: str) -> bool:
+    """Return True for function names, router instructions, or hidden control prose."""
+    return bool(_INTERNAL_CONTROL_LEAK.search(_clean(text)))
 
 
 def _is_scheduling_question(sentence: str) -> bool:
@@ -46,12 +66,12 @@ def sanitize_spoken_action_integrity(
     *,
     allow_booking_claim: bool = False,
 ) -> str:
-    """Mirror the shipping guard for unsupported external-action speech.
+    """Fail closed on internal syntax and unsupported external-action speech.
 
-    Before a real tool succeeds, Dialforge may ask for exact scheduling details or
-    note a follow-up request, but it may not promise that it will send, call, book,
-    schedule, reserve, or confirm an external action. This function intentionally
-    does not alter raw model scoring; it models only the final speech boundary.
+    Internal function/control text is replaced before TTS. Before a real tool
+    succeeds, Lineborn may ask for scheduling details or note a follow-up request,
+    but it may not promise an external action. Raw model output remains available
+    to the benchmark for diagnostics; only the speech boundary is sanitized here.
     """
     value = _clean(text)
     if not value:
@@ -59,7 +79,9 @@ def sanitize_spoken_action_integrity(
 
     clean: list[str] = []
     for sentence in [part.strip() for part in _SENTENCE_SPLIT.split(value) if part.strip()]:
-        if _UNSUPPORTED_SEND_ACTION.search(sentence) or _UNSUPPORTED_PAST_ACTION.search(sentence):
+        if contains_internal_control_text(sentence):
+            safe = _INTERNAL_CONTROL_FALLBACK
+        elif _UNSUPPORTED_SEND_ACTION.search(sentence) or _UNSUPPORTED_PAST_ACTION.search(sentence):
             safe = "I can note that request for the team."
         elif _UNSUPPORTED_CALLBACK_ACTION.search(sentence):
             safe = "What exact day and time works best?"
