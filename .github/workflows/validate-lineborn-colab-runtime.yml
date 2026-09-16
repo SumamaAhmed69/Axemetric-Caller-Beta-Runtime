@@ -50,7 +50,7 @@ jobs:
               'STRICT PRE-RELEASE RESULT',
           ]
           for token in required_notebook:
-              assert token in source, token
+              assert token in source, f'notebook missing: {token}'
 
           required_runtime = [
               '@app.get("/lineborn/health")',
@@ -67,20 +67,20 @@ jobs:
               '"tts_rtf_median_max": 0.70',
           ]
           for token in required_runtime:
-              assert token in runtime, token
+              assert token in runtime, f'runtime missing: {token}'
 
-          assert 'LINEBORN_COMPANION_TOKEN' in bootstrap
-          assert 'lineborn_colab_runtime:app' in bootstrap
-          assert 'trycloudflare.com' in bootstrap
-          assert '>= 20_000' in bootstrap
-          assert '>= 11_500' in bootstrap
+          assert 'LINEBORN_COMPANION_TOKEN' in bootstrap, 'bootstrap token contract missing'
+          assert 'lineborn_colab_runtime:app' in bootstrap, 'bootstrap worker target missing'
+          assert 'trycloudflare' in bootstrap, 'Cloudflare tunnel contract missing'
+          assert '>= 20_000' in bootstrap, 'performance VRAM tier missing'
+          assert '>= 11_500' in bootstrap, 'balanced VRAM tier missing'
 
           # Public runtime must never contain application/carrier credentials.
           forbidden = ['SIP_PASSWORD=', 'LIVEKIT_API_SECRET=', 'AXEMETRIC_CONTROL_TOKEN=']
           for token in forbidden:
-              assert token not in runtime
-              assert token not in bootstrap
-              assert token not in source
+              assert token not in runtime, f'forbidden runtime token: {token}'
+              assert token not in bootstrap, f'forbidden bootstrap token: {token}'
+              assert token not in source, f'forbidden notebook token: {token}'
 
           print('Lineborn Colab pre-release runtime static contract: PASS')
           PY
