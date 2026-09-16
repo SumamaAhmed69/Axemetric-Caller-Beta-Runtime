@@ -1,0 +1,36 @@
+name: Validate Lineborn Sales LoRA
+
+on:
+  push:
+    branches: [lineborn-sales-lora]
+    paths:
+      - 'training/**'
+      - '.github/workflows/validate-sales-lora.yml'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Build and validate corpus
+        run: |
+          python training/build_sales_corpus.py
+          python training/validate_sales_corpus.py
+      - name: Validate Python and notebook syntax
+        run: |
+          python -m py_compile training/build_sales_corpus.py training/validate_sales_corpus.py training/train_sales_lora.py training/train_sales_dpo.py training/merge_sales_adapter.py
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('training/Lineborn_Sales_LoRA_Colab.ipynb')
+          nb = json.loads(p.read_text('utf-8'))
+          assert nb['nbformat'] == 4
+          assert any('train_sales_lora.py' in ''.join(c.get('source', [])) for c in nb['cells'])
+          assert any('train_sales_dpo.py' in ''.join(c.get('source', [])) for c in nb['cells'])
+          print('notebook valid')
+          PY
