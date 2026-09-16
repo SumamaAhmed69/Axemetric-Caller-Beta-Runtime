@@ -1,0 +1,2 @@
+Lineborn beta.15 macOS runtime build trigger.
+Apple Silicon arm64 and Intel x64 runtime packaging must pass native SIP, Chatterbox and Ollama smoke tests before publication.
