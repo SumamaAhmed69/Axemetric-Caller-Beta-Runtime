@@ -89,7 +89,8 @@ jobs:
           python -m pip install --upgrade pip wheel setuptools
           pip install pyinstaller fastapi uvicorn pydantic huggingface_hub requests packaging filelock regex tqdm safetensors importlib_metadata
           pip install "torch==$TORCH_VERSION" "torchaudio==$TORCH_VERSION"
-          pip install numpy librosa==0.11.0 s3tokenizer transformers==5.2.0 diffusers==0.29.0 conformer==0.3.2 safetensors==0.5.3 spacy-pkuseg pykakasi==2.3.0 pyloudnorm omegaconf
+          pip install --only-binary=:all: "numpy==1.26.4" "llvmlite==0.44.0" "numba==0.61.2"
+          pip install numpy==1.26.4 librosa==0.11.0 s3tokenizer transformers==5.2.0 diffusers==0.29.0 conformer==0.3.2 safetensors==0.5.3 spacy-pkuseg pykakasi==2.3.0 pyloudnorm omegaconf
           pip install --force-reinstall --no-deps "$PERTH_SOURCE"
           pip install --force-reinstall --no-deps "$CHATTERBOX_SOURCE"
           python - <<'PY'
