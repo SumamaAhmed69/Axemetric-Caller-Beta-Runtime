@@ -1,8 +1,9 @@
-transformers==5.17.0
-peft==0.21.0
-trl==1.13.0
-datasets==5.0.1
-accelerate==1.15.0
-bitsandbytes==0.50.2
-safetensors==0.8.0
-sentencepiece>=0.2.0
+transformers>=5.17.0
+peft>=0.21.0
+trl>=1.13.0
+datasets>=5.0.1
+accelerate>=1.15.0
+bitsandbytes>=0.50.2
+safetensors>=0.6.2
+sentencepiece>=0.2.1
+jedi>=0.19.2
