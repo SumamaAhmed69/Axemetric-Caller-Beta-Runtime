@@ -47,7 +47,8 @@ _GATEKEEPER = re.compile(
 )
 _GATEKEEPER_NO_BYPASS = re.compile(
     r"\b(?:not\s+transferring|won't\s+transfer|will\s+not\s+transfer)\b.{0,60}\b(?:cold\s+calls?|you)\b|"
-    r"\b(?:don't|do\s+not|dont)\s+(?:call|contact)\s+(?:him|her|them|the\s+owner|my\s+boss)\b",
+    r"\b(?:don't|do\s+not|dont)\s+(?:call|contact)\s+(?:him|her|them|the\s+owner|my\s+boss)\b|"
+    r"\bdon't\s+try\s+to\s+(?:sneak|go)\s+around\s+me\b",
     re.I,
 )
 _PROBLEM_NEEDS_IMPACT = re.compile(
@@ -56,7 +57,7 @@ _PROBLEM_NEEDS_IMPACT = re.compile(
     r"\b(?:missed\s+calls?|after[-\s]?hours\s+calls?)\b|"
     r"\b(?:estimates?|quotes?|follow[-\s]?ups?)\b.{0,60}\b(?:sit|untouched|delayed|slow|days?)\b|"
     r"\b(?:tracking|attribution|ad\s+source|booked[-\s]?job\s+revenue)\b.{0,80}\b"
-    r"(?:broken|doesn't|does\s+not|can't|cannot|reconcile|connect)\b",
+    r"(?:broken|doesn't|does\s+not|don't|do\s+not|can't|cannot|reconcile|connect)\b",
     re.I,
 )
 _DIRECT_QUESTION = re.compile(
@@ -72,13 +73,7 @@ _old_gate_model = gate.gate_model
 
 
 def _small_model_control_safe_prompt(prompt: str) -> str:
-    """Remove literal internal function names from the 1.7B model-visible card.
-
-    High-confidence call-control actions are already handled deterministically by
-    route_turn before the model. The small model therefore does not need hidden
-    function names repeated in its prose instructions, which were the main source
-    of verbatim leakage during the first strict benchmark.
-    """
+    """Remove literal internal function/control names from the 1.7B prompt."""
     replacements = {
         "call mark_do_not_call immediately. Do not keep selling.": "acknowledge briefly and stop selling immediately.",
         "call record_outcome with wrong_number.": "apologize briefly and end the call.",
@@ -87,6 +82,10 @@ def _small_model_control_safe_prompt(prompt: str) -> str:
         "call request_human_follow_up. Never claim anything was sent.": "note the follow-up request and never claim anything was sent.",
         "call no booking tool and ask only for the missing detail.": "do not claim a booking and ask only for the missing detail.",
         "Use the first applicable action rule and stop.": "Follow the first applicable behavior above and then stop generating.",
+        "record_outcome": "the outcome action",
+        "book_meeting": "the booking action",
+        "mark_do_not_call": "the do-not-call action",
+        "request_human_follow_up": "the follow-up action",
     }
     value = str(prompt or "")
     for old, new in replacements.items():
@@ -106,7 +105,7 @@ def route_turn_v5(text: str):
     if decision.kind != "model":
         return decision
     value = re.sub(r"\s+", " ", str(text or "")).strip()
-    if _GATEKEEPER.search(value):
+    if _GATEKEEPER.search(value) or _GATEKEEPER_NO_BYPASS.search(value):
         if _GATEKEEPER_NO_BYPASS.search(value):
             reply = "Understood. I won't try to go around you. What should I tell the person who handles marketing this is about?"
         else:
