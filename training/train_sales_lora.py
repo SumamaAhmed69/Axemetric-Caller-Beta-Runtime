@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 import math
 import os
@@ -74,6 +75,28 @@ class Collator:
         }
 
 
+def compatible_init_kwargs(cls, values: dict[str, Any], aliases: dict[str, str] | None = None) -> dict[str, Any]:
+    """Only pass arguments supported by the installed library version.
+
+    Colab moves quickly. This keeps the training recipe stable across compatible
+    Transformers releases without silently swallowing model/training failures.
+    """
+    aliases = aliases or {}
+    params = inspect.signature(cls.__init__).parameters
+    out: dict[str, Any] = {}
+    for key, value in values.items():
+        if key in params:
+            out[key] = value
+            continue
+        alias = aliases.get(key)
+        if alias and alias in params:
+            out[alias] = value
+            print(f"TrainingArguments compatibility: {key} -> {alias}")
+            continue
+        print(f"TrainingArguments compatibility: omitting unsupported option {key}={value!r}")
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", default="training/data/sales_sft.jsonl")
@@ -140,30 +163,42 @@ def main() -> int:
 
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
+    optimizer_steps_per_epoch = max(1, math.ceil(len(train) / max(1, args.grad_accum)))
+    total_optimizer_steps = max(1, math.ceil(optimizer_steps_per_epoch * args.epochs))
+    warmup_steps = max(1, round(total_optimizer_steps * 0.05))
+
+    training_values = {
+        "output_dir": str(output),
+        "num_train_epochs": args.epochs,
+        "per_device_train_batch_size": 1,
+        "per_device_eval_batch_size": 1,
+        "gradient_accumulation_steps": args.grad_accum,
+        "learning_rate": args.lr,
+        "warmup_steps": warmup_steps,
+        "lr_scheduler_type": "cosine",
+        "logging_steps": 5,
+        "eval_strategy": "epoch",
+        "save_strategy": "epoch",
+        "save_total_limit": 2,
+        "gradient_checkpointing": True,
+        "fp16": compute_dtype == torch.float16,
+        "bf16": compute_dtype == torch.bfloat16,
+        "optim": "paged_adamw_8bit",
+        "weight_decay": 0.01,
+        "max_grad_norm": 1.0,
+        "report_to": "none",
+        "remove_unused_columns": False,
+        "seed": args.seed,
+        "data_seed": args.seed,
+    }
     training_args = TrainingArguments(
-        output_dir=str(output),
-        num_train_epochs=args.epochs,
-        per_device_train_batch_size=1,
-        per_device_eval_batch_size=1,
-        gradient_accumulation_steps=args.grad_accum,
-        learning_rate=args.lr,
-        warmup_ratio=0.05,
-        lr_scheduler_type="cosine",
-        logging_steps=5,
-        eval_strategy="epoch",
-        save_strategy="epoch",
-        save_total_limit=2,
-        gradient_checkpointing=True,
-        fp16=compute_dtype == torch.float16,
-        bf16=compute_dtype == torch.bfloat16,
-        optim="paged_adamw_8bit",
-        weight_decay=0.01,
-        max_grad_norm=1.0,
-        report_to="none",
-        remove_unused_columns=False,
-        seed=args.seed,
-        data_seed=args.seed,
+        **compatible_init_kwargs(
+            TrainingArguments,
+            training_values,
+            aliases={"eval_strategy": "evaluation_strategy"},
+        )
     )
+
     trainer = Trainer(
         model=model,
         args=training_args,
@@ -173,8 +208,13 @@ def main() -> int:
     )
     train_result = trainer.train()
     eval_result = trainer.evaluate()
-    model.save_pretrained(output / "adapter")
-    tokenizer.save_pretrained(output / "adapter")
+    adapter_dir = output / "adapter"
+    model.save_pretrained(adapter_dir)
+    tokenizer.save_pretrained(adapter_dir)
+    adapter_weights = adapter_dir / "adapter_model.safetensors"
+    if not adapter_weights.is_file() or adapter_weights.stat().st_size <= 1024 * 1024:
+        raise SystemExit("SFT training completed but a valid adapter_model.safetensors was not produced")
+
     metrics = {
         "base_model": args.base_model,
         "train_examples": len(train),
@@ -185,7 +225,9 @@ def main() -> int:
         "lora_r": args.lora_r,
         "lora_alpha": args.lora_alpha,
         "max_length": args.max_length,
+        "warmup_steps": warmup_steps,
         "seed": args.seed,
+        "adapter_bytes": adapter_weights.stat().st_size,
     }
     (output / "training_metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     print(json.dumps(metrics, indent=2))
