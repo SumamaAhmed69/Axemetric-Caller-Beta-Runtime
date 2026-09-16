@@ -10,6 +10,7 @@ from pathlib import Path
 CONTROL = re.compile(r"\b(?:record_outcome|book_meeting|mark_do_not_call|request_human_follow_up|tool[_ -]?(?:call|name|arguments)|private call control rules|decision card)\b", re.I)
 UNSAFE_ACTION = re.compile(r"\b(?:i|we)(?:'ll| will)\s+(?:send|email|text|book|schedule|call you|call back)\b", re.I)
 GUARANTEE = re.compile(r"\b(?:guarantee|guaranteed|promise)\b.{0,80}\b(?:rank|lead|job|revenue|result|roi|saving)\b", re.I)
+GUARANTEE_NEGATION = re.compile(r"\b(?:can't|cannot|can not|don't|do not|won't|will not|wouldn't|would not|never)\b.{0,35}\b(?:guarantee|promise)\b|\b(?:no guarantee|not guaranteed)\b", re.I)
 PRESSURE = re.compile(r"\b(?:what would it take to get a yes today|you really need|can't hurt|only take thirty seconds|act now)\b", re.I)
 
 
@@ -53,8 +54,8 @@ def validate_sft(items: list[dict]) -> list[str]:
             errors.append(f"{ident}: internal control syntax in preferred answer")
         if UNSAFE_ACTION.search(answer):
             errors.append(f"{ident}: unsupported external-action promise in preferred answer")
-        if GUARANTEE.search(answer):
-            errors.append(f"{ident}: result guarantee in preferred answer")
+        if GUARANTEE.search(answer) and not GUARANTEE_NEGATION.search(answer):
+            errors.append(f"{ident}: unsupported positive result guarantee in preferred answer")
         if PRESSURE.search(answer):
             errors.append(f"{ident}: pressure language in preferred answer")
     return errors
