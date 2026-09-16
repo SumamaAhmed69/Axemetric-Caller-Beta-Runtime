@@ -23,14 +23,43 @@ jobs:
           python training/validate_sales_corpus.py
       - name: Validate Python and notebook syntax
         run: |
-          python -m py_compile training/build_sales_corpus.py training/validate_sales_corpus.py training/train_sales_lora.py training/train_sales_dpo.py training/merge_sales_adapter.py
+          python -m py_compile training/build_sales_corpus.py training/validate_sales_corpus.py training/train_sales_lora.py training/train_sales_dpo.py training/merge_sales_adapter.py training/package_sales_adapters.py
           python - <<'PY'
           import json
           from pathlib import Path
           p = Path('training/Lineborn_Sales_LoRA_Colab.ipynb')
           nb = json.loads(p.read_text('utf-8'))
           assert nb['nbformat'] == 4
-          assert any('train_sales_lora.py' in ''.join(c.get('source', [])) for c in nb['cells'])
-          assert any('train_sales_dpo.py' in ''.join(c.get('source', [])) for c in nb['cells'])
+          source = '\n'.join(''.join(c.get('source', [])) for c in nb['cells'])
+          assert 'train_sales_lora.py' in source
+          assert 'train_sales_dpo.py' in source
+          assert 'package_sales_adapters.py' in source
+          assert 'subprocess.run' in source and 'check=True' in source
+          assert 'adapter_model.safetensors' in source
           print('notebook valid')
+          PY
+      - name: Verify exporter rejects incomplete outputs and accepts real-shaped adapters
+        run: |
+          rm -rf /tmp/lineborn-export-test
+          mkdir -p /tmp/lineborn-export-test/lineborn-sales-sft/adapter
+          if python training/package_sales_adapters.py --output-root /tmp/lineborn-export-test --archive /tmp/should-not-exist.zip; then
+            echo 'Exporter incorrectly accepted an empty adapter' >&2
+            exit 1
+          fi
+          printf '{"base_model":"test"}' > /tmp/lineborn-export-test/lineborn-sales-sft/adapter/adapter_config.json
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('/tmp/lineborn-export-test/lineborn-sales-sft/adapter/adapter_model.safetensors')
+          p.write_bytes(b'x' * 4096)
+          PY
+          printf '{"train_loss":1.0}' > /tmp/lineborn-export-test/lineborn-sales-sft/training_metrics.json
+          python training/package_sales_adapters.py --output-root /tmp/lineborn-export-test --archive /tmp/lineborn-export-test.zip
+          python - <<'PY'
+          import zipfile
+          with zipfile.ZipFile('/tmp/lineborn-export-test.zip') as z:
+              names=set(z.namelist())
+          assert 'lineborn-sales-sft/adapter/adapter_config.json' in names
+          assert 'lineborn-sales-sft/adapter/adapter_model.safetensors' in names
+          assert 'lineborn-sales-export-manifest.json' in names
+          print('exporter valid')
           PY
