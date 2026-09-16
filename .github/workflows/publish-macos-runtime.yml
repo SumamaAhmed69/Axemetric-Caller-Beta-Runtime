@@ -1,0 +1,328 @@
+name: Publish Lineborn macOS Runtime
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'runtime/chatterbox_bridge.py'
+      - 'runtime/dialforge_audio/**'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lineborn-macos-runtime-beta15
+  cancel-in-progress: false
+
+env:
+  SOURCE_RELEASE_TAG: beta-v20.4.0
+  RELEASE_TAG: beta-v20.4.0-beta.15
+  RUNTIME_VERSION: 20.4.0-beta.15
+  BARESIP_TAG: v4.10.0
+  RE_TAG: v4.10.0
+  CHATTERBOX_SOURCE: git+https://github.com/resemble-ai/chatterbox.git@5de7a54aa4e5e2baadb0182dde554908b48b85c2
+  PERTH_SOURCE: git+https://github.com/resemble-ai/Perth.git@ff1c8ac55a976971245cdd53c18d6131ca00d993
+
+jobs:
+  ollama-macos:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package official Ollama macOS runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 5 -o Ollama-darwin.zip https://ollama.com/download/Ollama-darwin.zip
+          unzip -q Ollama-darwin.zip -d ollama-download
+          mkdir -p package
+          cp -a 'ollama-download/Ollama.app/Contents/Resources/.' package/
+          test -x package/ollama || chmod +x package/ollama
+          file package/ollama
+          export OLLAMA_HOST=127.0.0.1:11439
+          export OLLAMA_MODELS="$RUNNER_TEMP/lineborn-ollama-smoke-models"
+          ./package/ollama serve >ollama-smoke.log 2>&1 &
+          pid=$!
+          trap 'kill "$pid" >/dev/null 2>&1 || true' EXIT
+          ready=0
+          for i in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:11439/api/tags >/dev/null 2>&1; then ready=1; break; fi
+            if ! kill -0 "$pid" >/dev/null 2>&1; then cat ollama-smoke.log; exit 1; fi
+            sleep 1
+          done
+          test "$ready" = 1 || { cat ollama-smoke.log; exit 1; }
+          kill "$pid" >/dev/null 2>&1 || true
+          wait "$pid" 2>/dev/null || true
+          (cd package && zip -qry ../ollama-macos-universal.zip .)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ollama-macos-universal
+          path: ollama-macos-universal.zip
+          compression-level: 0
+
+  chatterbox-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+            torch_version: '2.6.0'
+          - arch: x64
+            runner: macos-15-intel
+            torch_version: '2.2.2'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Build portable Chatterbox for macOS ${{ matrix.arch }}
+        shell: bash
+        env:
+          TORCH_VERSION: ${{ matrix.torch_version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip wheel setuptools
+          pip install pyinstaller fastapi uvicorn pydantic huggingface_hub requests packaging filelock regex tqdm safetensors importlib_metadata
+          pip install "torch==$TORCH_VERSION" "torchaudio==$TORCH_VERSION"
+          pip install numpy librosa==0.11.0 s3tokenizer transformers==5.2.0 diffusers==0.29.0 conformer==0.3.2 safetensors==0.5.3 spacy-pkuseg pykakasi==2.3.0 pyloudnorm omegaconf
+          pip install --force-reinstall --no-deps "$PERTH_SOURCE"
+          pip install --force-reinstall --no-deps "$CHATTERBOX_SOURCE"
+          python - <<'PY'
+          import platform, torch
+          from chatterbox.tts_turbo import ChatterboxTurboTTS
+          print('machine=', platform.machine(), 'torch=', torch.__version__, 'mps=', hasattr(torch.backends, 'mps') and torch.backends.mps.is_available())
+          assert ChatterboxTurboTTS is not None
+          PY
+          python -m PyInstaller --noconfirm --clean --onedir --windowed --name chatterbox-server --distpath dist --workpath work --specpath spec --collect-all chatterbox --collect-all perth --collect-all torch --collect-all torchaudio --recursive-copy-metadata diffusers --recursive-copy-metadata transformers --copy-metadata requests --copy-metadata packaging --copy-metadata filelock --copy-metadata regex --copy-metadata tqdm --copy-metadata safetensors --copy-metadata huggingface-hub --copy-metadata importlib_metadata runtime/chatterbox_bridge.py
+          test -x dist/chatterbox-server/chatterbox-server || chmod +x dist/chatterbox-server/chatterbox-server
+      - name: Smoke test packaged Chatterbox
+        shell: bash
+        run: |
+          set -euo pipefail
+          smoke="$RUNNER_TEMP/lineborn-chatterbox-smoke"
+          mkdir -p "$smoke"
+          export AXEMETRIC_DATA_ROOT="$smoke"
+          export AXEMETRIC_CHATTERBOX_PORT=18881
+          export AXEMETRIC_CHATTERBOX_DEVICE=cpu
+          dist/chatterbox-server/chatterbox-server >"$smoke/server.log" 2>&1 &
+          pid=$!
+          trap 'kill "$pid" >/dev/null 2>&1 || true' EXIT
+          ready=0
+          for i in $(seq 1 180); do
+            if curl -fsS http://127.0.0.1:18881/health | grep -q '"ok":true'; then ready=1; break; fi
+            if ! kill -0 "$pid" >/dev/null 2>&1; then cat "$smoke/server.log"; exit 1; fi
+            sleep 1
+          done
+          test "$ready" = 1 || { cat "$smoke/server.log"; exit 1; }
+          kill "$pid" >/dev/null 2>&1 || true
+          wait "$pid" 2>/dev/null || true
+          (cd dist/chatterbox-server && zip -qry "../../chatterbox-macos-${{ matrix.arch }}.zip" .)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chatterbox-macos-${{ matrix.arch }}
+          path: chatterbox-macos-${{ matrix.arch }}.zip
+          compression-level: 0
+
+  sip-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native prerequisites
+        shell: bash
+        run: brew install cmake ninja openssl@3
+      - name: Build static Baresip + Lineborn bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch "$RE_TAG" https://github.com/baresip/re.git native/re
+          git clone --depth 1 --branch "$BARESIP_TAG" https://github.com/baresip/baresip.git native/baresip
+          OPENSSL_ROOT="$(brew --prefix openssl@3)"
+          cmake -S native/re -B native/re/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLIBRE_BUILD_SHARED=OFF -DLIBRE_BUILD_STATIC=ON -DOPENSSL_ROOT_DIR="$OPENSSL_ROOT" -DOPENSSL_USE_STATIC_LIBS=TRUE
+          cmake --build native/re/build -j 3
+          cmake -S native/baresip -B native/baresip/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSTATIC=ON -DMODULES='account;auconv;auresamp;ctrl_tcp;g711;ice;menu;stun;turn;uuid' -DAPP_MODULES_DIR="$GITHUB_WORKSPACE/runtime" -DAPP_MODULES='dialforge_audio' -DOPENSSL_ROOT_DIR="$OPENSSL_ROOT" -DOPENSSL_USE_STATIC_LIBS=TRUE
+          cmake --build native/baresip/build -j 3
+          exe="$(find native/baresip/build -type f -name baresip -perm +111 | head -n 1)"
+          test -n "$exe"
+          mkdir -p package
+          cp "$exe" package/baresip
+          chmod +x package/baresip
+          cp native/baresip/LICENSE package/BARESIP-LICENSE.txt
+          cp native/re/LICENSE package/LIBRE-LICENSE.txt
+          printf '%s\n' 'Lineborn Direct SIP runtime for macOS' 'Baresip v4.10.0 + libre v4.10.0' 'Required modules and dialforge_audio are statically linked.' > package/LINEBORN-SIP-RUNTIME.txt
+          otool -L package/baresip
+      - name: Smoke test Direct SIP control socket
+        shell: bash
+        run: |
+          set -euo pipefail
+          cfg="$RUNNER_TEMP/lineborn-sip-smoke"
+          mkdir -p "$cfg"
+          module_path="$(cd package && pwd)"
+          cat > "$cfg/config" <<EOF
+          call_max_calls 1
+          call_accept no
+          audio_player dialforge,bridge
+          audio_source dialforge,bridge
+          ausrc_srate 16000
+          auplay_srate 16000
+          ausrc_channels 1
+          auplay_channels 1
+          ausrc_format s16
+          auplay_format s16
+          auenc_format s16
+          audec_format s16
+          module_path $module_path
+          module g711.so
+          module auconv.so
+          module auresamp.so
+          module dialforge_audio.so
+          module stun.so
+          module turn.so
+          module ice.so
+          module_app account.so
+          module_app menu.so
+          module_app ctrl_tcp.so
+          ctrl_tcp_listen 127.0.0.1:4444
+          dialforge_audio_host 127.0.0.1
+          dialforge_audio_rx_port 47500
+          dialforge_audio_tx_port 47501
+          dialforge_audio_srate 16000
+          dialforge_audio_ptime 20
+          EOF
+          : > "$cfg/accounts"
+          package/baresip -f "$cfg" >"$cfg/baresip.log" 2>&1 &
+          pid=$!
+          trap 'kill "$pid" >/dev/null 2>&1 || true' EXIT
+          ready=0
+          for i in $(seq 1 100); do
+            if nc -z 127.0.0.1 4444 >/dev/null 2>&1; then ready=1; break; fi
+            if ! kill -0 "$pid" >/dev/null 2>&1; then cat "$cfg/baresip.log"; exit 1; fi
+            sleep 0.25
+          done
+          test "$ready" = 1 || { cat "$cfg/baresip.log"; exit 1; }
+          kill "$pid" >/dev/null 2>&1 || true
+          wait "$pid" 2>/dev/null || true
+          (cd package && zip -qry "../sip-macos-${{ matrix.arch }}.zip" .)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sip-macos-${{ matrix.arch }}
+          path: sip-macos-${{ matrix.arch }}.zip
+          compression-level: 0
+
+  publish:
+    needs: [ollama-macos, chatterbox-macos, sip-macos]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Build multi-platform manifest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p work release-assets
+          gh release download "$SOURCE_RELEASE_TAG" --pattern manifest.json --dir work --clobber
+          cp artifacts/*.zip release-assets/
+          python - <<'PY'
+          import hashlib, json, os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          source_tag = os.environ['SOURCE_RELEASE_TAG']
+          target_tag = os.environ['RELEASE_TAG']
+          repo = os.environ['GITHUB_REPOSITORY']
+          doc = json.loads(Path('work/manifest.json').read_text(encoding='utf-8-sig'))
+          packages = []
+          for pkg in doc.get('packages', []):
+              p = dict(pkg)
+              name = p.get('name')
+              if name in {'qwen-model', 'speech-cache'}:
+                  p['platforms'] = ['windows', 'macos']
+                  p['arches'] = ['x64', 'arm64']
+              else:
+                  p['platforms'] = ['windows']
+                  p['arches'] = ['x64']
+              packages.append(p)
+
+          def package_from_file(name, filename, arches, **extra):
+              path = Path('release-assets') / filename
+              data = path.read_bytes()
+              sha = hashlib.sha256(data).hexdigest()
+              return {
+                  'name': name,
+                  'file': filename,
+                  'url': f'https://github.com/{repo}/releases/download/{target_tag}/{filename}',
+                  'sha256': sha,
+                  'size': len(data),
+                  'profiles': ['compatibility', 'balanced', 'performance'],
+                  'platforms': ['macos'],
+                  'arches': arches,
+                  **extra,
+              }
+
+          packages.append(package_from_file('ollama', 'ollama-macos-universal.zip', ['x64','arm64'], engine='ollama-macos'))
+          packages.append(package_from_file('chatterbox', 'chatterbox-macos-arm64.zip', ['arm64'], engine='chatterbox-nano-mps'))
+          packages.append(package_from_file('chatterbox', 'chatterbox-macos-x64.zip', ['x64'], engine='chatterbox-nano-cpu'))
+          packages.append(package_from_file('sip', 'sip-macos-arm64.zip', ['arm64'], engine='baresip-static', version='4.10.0'))
+          packages.append(package_from_file('sip', 'sip-macos-x64.zip', ['x64'], engine='baresip-static', version='4.10.0'))
+
+          doc['version'] = os.environ['RUNTIME_VERSION']
+          doc['generated_at'] = datetime.now(timezone.utc).isoformat()
+          doc['platform_contract'] = 1
+          doc['packages'] = packages
+          Path('release-assets/manifest.json').write_text(json.dumps(doc, indent=2), encoding='utf-8')
+
+          required = {'ollama','qwen-model','chatterbox','speech-cache','sip'}
+          for platform_name, arches in {'windows':['x64'], 'macos':['x64','arm64']}.items():
+              for arch in arches:
+                  for profile in ['compatibility','balanced','performance']:
+                      selected = [p for p in packages if profile in p.get('profiles', []) and platform_name in p.get('platforms', []) and arch in p.get('arches', [])]
+                      names = {p['name'] for p in selected}
+                      missing = required - names
+                      if missing:
+                          raise SystemExit(f'{platform_name}/{arch}/{profile} missing {sorted(missing)}')
+                      for singleton in required - {'qwen-model'}:
+                          count = sum(1 for p in selected if p['name'] == singleton)
+                          if count != 1:
+                              raise SystemExit(f'{platform_name}/{arch}/{profile}: expected one {singleton}, got {count}')
+                      qwen = [p for p in selected if p['name'] == 'qwen-model']
+                      if len(qwen) != 1:
+                          raise SystemExit(f'{platform_name}/{arch}/{profile}: expected one qwen-model, got {len(qwen)}')
+          print('Multi-platform runtime manifest validated.')
+          PY
+      - name: Publish beta.15 runtime release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" --title 'Lineborn Runtime 20.4.0 beta.15' --notes 'Multi-platform runtime feed for Windows and macOS. Adds Apple Silicon and Intel Mac Ollama, Chatterbox and Direct SIP packages while reusing verified Qwen and speech model assets.'
+          fi
+          gh release upload "$RELEASE_TAG" release-assets/*.zip release-assets/manifest.json --clobber
+          curl -fL --retry 5 -o published-manifest.json "https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG/manifest.json"
+          python - <<'PY'
+          import json, os
+          doc=json.load(open('published-manifest.json'))
+          assert doc['version'] == os.environ['RUNTIME_VERSION']
+          assert doc.get('platform_contract') == 1
+          print('Published macOS/Windows runtime manifest verified with', len(doc['packages']), 'package entries.')
+          PY
