@@ -108,7 +108,7 @@ def main() -> int:
         args.base_model,
         quantization_config=quant,
         device_map={"": 0},
-        torch_dtype=compute_dtype,
+        dtype=compute_dtype,
     )
     model.config.use_cache = False
     model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
@@ -135,6 +135,8 @@ def main() -> int:
     valid = split["test"].map(mapper, remove_columns=split["test"].column_names)
     train = train.filter(lambda x: int(x["supervised_tokens"]) >= 4).remove_columns(["supervised_tokens"])
     valid = valid.filter(lambda x: int(x["supervised_tokens"]) >= 4).remove_columns(["supervised_tokens"])
+    if not len(train) or not len(valid):
+        raise SystemExit(f"tokenization produced an empty split: train={len(train)} eval={len(valid)}")
 
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
