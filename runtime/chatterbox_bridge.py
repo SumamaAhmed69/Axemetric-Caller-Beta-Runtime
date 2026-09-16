@@ -18,7 +18,20 @@ from pydantic import BaseModel
 from chatterbox.tts_turbo import ChatterboxTurboTTS, Conditionals
 
 PORT = int(os.getenv("AXEMETRIC_CHATTERBOX_PORT", "8881"))
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+REQUESTED_DEVICE = os.getenv("AXEMETRIC_CHATTERBOX_DEVICE", "auto").strip().lower()
+if REQUESTED_DEVICE == "auto":
+    if torch.cuda.is_available():
+        DEVICE = "cuda"
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        DEVICE = "mps"
+    else:
+        DEVICE = "cpu"
+elif REQUESTED_DEVICE == "mps":
+    DEVICE = "mps" if hasattr(torch.backends, "mps") and torch.backends.mps.is_available() else "cpu"
+elif REQUESTED_DEVICE == "cuda":
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+else:
+    DEVICE = "cpu"
 NANO = os.getenv("AXEMETRIC_CHATTERBOX_NANO", "1") != "0"
 # Bump this whenever the pinned Chatterbox conditional representation changes.
 CONDITIONALS_CACHE_VERSION = "5de7a54-nano-v1" if NANO else "5de7a54-turbo-v1"
@@ -29,8 +42,10 @@ def data_root() -> Path:
     if override:
         return Path(override)
     if os.name == "nt":
-        return Path(os.getenv("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "Axemetric Caller"
-    return Path.home() / ".local" / "share" / "axemetric-caller"
+        return Path(os.getenv("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "Lineborn"
+    if __import__("sys").platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "Lineborn"
+    return Path.home() / ".local" / "share" / "lineborn"
 
 
 RUNTIME_DIR = data_root() / "runtime"
@@ -38,7 +53,7 @@ MARKER = RUNTIME_DIR / "voice-reference.json"
 REFERENCE = data_root() / "voices" / "reference.wav"
 CONDITIONALS_CACHE = RUNTIME_DIR / ("voice-conditionals-nano.pt" if NANO else "voice-conditionals-turbo.pt")
 CONDITIONALS_META = RUNTIME_DIR / ("voice-conditionals-nano.json" if NANO else "voice-conditionals-turbo.json")
-app = FastAPI(title="Dialforge Chatterbox", docs_url=None, redoc_url=None)
+app = FastAPI(title="Lineborn Chatterbox", docs_url=None, redoc_url=None)
 _lock = RLock()
 _model: ChatterboxTurboTTS | None = None
 _loaded_revision = -1
@@ -247,7 +262,7 @@ def warmup():
 def models():
     return {
         "object": "list",
-        "data": [{"id": "chatterbox", "object": "model", "owned_by": "dialforge-local"}],
+        "data": [{"id": "chatterbox", "object": "model", "owned_by": "lineborn-local"}],
     }
 
 
