@@ -1,0 +1,38 @@
+name: Clear Actions storage now
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/clear-actions-storage-now.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Delete all Actions artifacts and caches in runtime repo
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'Deleting Actions artifacts...'
+          gh api --paginate "/repos/$REPO/actions/artifacts?per_page=100" --jq '.artifacts[].id' | while read -r id; do
+            [ -n "$id" ] || continue
+            gh api --method DELETE "/repos/$REPO/actions/artifacts/$id"
+            echo "deleted artifact $id"
+          done
+          echo 'Deleting Actions caches...'
+          gh api "/repos/$REPO/actions/caches?per_page=100" --jq '.actions_caches[].id' | while read -r id; do
+            [ -n "$id" ] || continue
+            gh api --method DELETE "/repos/$REPO/actions/caches/$id"
+            echo "deleted cache $id"
+          done
+          echo 'Cleanup complete.'
