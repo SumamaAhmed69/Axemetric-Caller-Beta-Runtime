@@ -1,4 +1,4 @@
-name: Apply macOS runtime build fixes
+name: Apply macOS SIP portability fix
 
 on:
   push:
@@ -13,44 +13,31 @@ permissions:
 jobs:
   patch:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
           ref: main
-      - name: Patch macOS SIP portability and Intel Chatterbox dependencies
+      - name: Patch Baresip bridge for macOS threading
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
-
-          cfile = Path('runtime/dialforge_audio/dialforge_audio.c')
-          text = cfile.read_text('utf-8')
+          path = Path('runtime/dialforge_audio/dialforge_audio.c')
+          text = path.read_text('utf-8')
           if '#include <threads.h>' in text:
-              text = text.replace('#include <threads.h>', '#include <re_thread.h>', 1)
-              cfile.write_text(text, 'utf-8')
+              path.write_text(text.replace('#include <threads.h>', '#include <re_thread.h>', 1), 'utf-8')
           elif '#include <re_thread.h>' not in text:
-              raise SystemExit('dialforge_audio thread include pattern not found')
-
-          wf = Path('.github/workflows/publish-macos-runtime.yml')
-          text = wf.read_text('utf-8')
-          old = '          pip install numpy librosa==0.11.0 s3tokenizer transformers==5.2.0 diffusers==0.29.0 conformer==0.3.2 safetensors==0.5.3 spacy-pkuseg pykakasi==2.3.0 pyloudnorm omegaconf'
-          new = '''          pip install --only-binary=:all: "numpy==1.26.4" "llvmlite==0.44.0" "numba==0.61.2"
-          pip install numpy==1.26.4 librosa==0.11.0 s3tokenizer transformers==5.2.0 diffusers==0.29.0 conformer==0.3.2 safetensors==0.5.3 spacy-pkuseg pykakasi==2.3.0 pyloudnorm omegaconf'''
-          if old in text:
-              text = text.replace(old, new, 1)
-              wf.write_text(text, 'utf-8')
-          elif 'llvmlite==0.44.0' not in text:
-              raise SystemExit('Chatterbox dependency pattern not found')
+              raise SystemExit('thread compatibility include not found')
           PY
-      - name: Commit fixes
+      - name: Commit SIP portability fix
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'Lineborn CI'
           git config user.email 'actions@users.noreply.github.com'
-          git add runtime/dialforge_audio/dialforge_audio.c .github/workflows/publish-macos-runtime.yml
+          git add runtime/dialforge_audio/dialforge_audio.c
           git diff --cached --quiet && exit 0
-          git commit -m 'Fix native macOS SIP and Intel Chatterbox builds'
+          git commit -m 'Use libre thread compatibility layer on macOS'
           git push origin HEAD:main
