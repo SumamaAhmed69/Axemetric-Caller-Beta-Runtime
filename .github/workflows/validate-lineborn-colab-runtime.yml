@@ -75,7 +75,7 @@ jobs:
 
           assert 'LINEBORN_COMPANION_TOKEN' in bootstrap
           assert 'lineborn_colab_runtime:app' in bootstrap
-          assert 'trycloudflare.com' in bootstrap
+          assert 'trycloudflare' in bootstrap
           assert 'vram_mb >= 20_000' in bootstrap
           assert 'vram_mb >= 11_500' in bootstrap
 
@@ -92,7 +92,7 @@ jobs:
           assert 'qwen3:1.7b' in direct_bootstrap
           assert 'qwen3:4b-instruct' in direct_bootstrap
           assert 'qwen3:4b-instruct-2507-q8_0' in direct_bootstrap
-          assert 'trycloudflare.com' not in direct_bootstrap
+          assert 'trycloudflare' not in direct_bootstrap
           assert 'LINEBORN_COMPANION_TOKEN' not in direct_bootstrap
 
           # Public benchmark/runtime must never contain application/carrier credentials.
