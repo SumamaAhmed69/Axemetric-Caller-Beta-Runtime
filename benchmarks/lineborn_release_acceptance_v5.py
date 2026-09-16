@@ -17,6 +17,7 @@ from dialforge_spoken_safety import (
     contains_internal_control_text,
     sanitize_spoken_action_integrity,
 )
+from lineborn_sales_mastery import SALES_MASTERY_SYSTEM
 
 # The Kaggle-safe wrapper has already installed the >5s deterministic Chatterbox
 # reference override on this module.
@@ -97,6 +98,10 @@ def product_system_v5(model: str) -> str:
     prompt = _old_product_system(model)
     if "1.7b" in str(model).lower():
         prompt = _small_model_control_safe_prompt(prompt)
+    else:
+        # Production 4B tiers get the same high-signal consultative sales policy.
+        # This keeps quantization a hardware choice rather than a different sales brain.
+        prompt = prompt + "\n\n" + SALES_MASTERY_SYSTEM
     return prompt
 
 
@@ -144,6 +149,28 @@ def _spoken_regressions() -> dict:
     return {"accuracy": accuracy, "cases": rows}
 
 
+def _sales_mastery_regression() -> dict:
+    lower = SALES_MASTERY_SYSTEM.lower()
+    required = [
+        "next-best-action rule",
+        "direct question",
+        "correction or contradiction",
+        "objection or concern",
+        "clear problem but unclear impact",
+        "highest information value",
+        "a-c-r-a",
+        "value bridge",
+        "existing provider or internal team",
+        "trust, risk, and ownership",
+        "closing",
+        "never create urgency",
+        "let me check if we can schedule",
+    ]
+    rows = [{"token": token, "passed": token in lower} for token in required]
+    accuracy = round(100 * sum(int(x["passed"]) for x in rows) / len(rows), 1)
+    return {"accuracy": accuracy, "cases": rows}
+
+
 def run_sales_v5(model, options):
     data = _old_run_sales(model, options)
     raw_attempts = 0
@@ -178,6 +205,7 @@ def run_sales_v5(model, options):
 def run_regressions_v5():
     result = _old_run_regressions()
     result["spoken_safety"] = _spoken_regressions()
+    result["sales_mastery_policy"] = _sales_mastery_regression()
     return result
 
 
@@ -185,9 +213,11 @@ def gate_model_v5(data):
     checks, _ = _old_gate_model(data)
     sales = data.get("sales") or {}
     spoken_reg = _spoken_regressions()
+    mastery_reg = _sales_mastery_regression()
     checks["spoken_control_leaks"] = int(sales.get("spoken_control_leaks") or 0) == 0
     checks["raw_control_leak_attempts"] = int(sales.get("raw_control_leak_attempts") or 0) == 0
     checks["spoken_safety_regression"] = spoken_reg["accuracy"] == 100.0
+    checks["sales_mastery_policy"] = mastery_reg["accuracy"] == 100.0
     return checks, all(checks.values())
 
 
@@ -201,6 +231,7 @@ gate.gate_model = gate_model_v5
 gate.GATES["spoken_control_leaks_max"] = 0
 gate.GATES["raw_control_leak_attempts_max"] = 0
 gate.GATES["spoken_safety_regression_min"] = 100.0
+gate.GATES["sales_mastery_policy_min"] = 100.0
 
 
 if __name__ == "__main__":
