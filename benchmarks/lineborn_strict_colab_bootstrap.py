@@ -3,8 +3,8 @@
 
 This benchmark runs entirely inside the temporary Colab VM. It does not require the
 Lineborn desktop app, a Cloudflare tunnel, SIP credentials, or a manually uploaded
-voice reference. It reuses the frozen Final Release Acceptance v4 corpus and scoring
-so results remain comparable with prior release-gate runs.
+voice reference. It reuses the frozen v4 corpus and adds the v5 speech/control-leak
+release blockers discovered during pre-release audit.
 """
 from __future__ import annotations
 
@@ -30,7 +30,6 @@ MODELS = (
     "qwen3:4b-instruct-2507-q8_0",
 )
 
-# Reuse the already-tested Python 3.11 / CUDA / Ollama / Whisper / Chatterbox installer.
 legacy.ROOT = ROOT
 legacy.VENV = ROOT / "lineborn-strict-py311-v1"
 legacy.CACHE = ROOT / "lineborn-strict-cache"
@@ -83,13 +82,14 @@ def main() -> int:
     models = selected_models(args.models)
 
     print("=" * 80, flush=True)
-    print("LINEBORN STRICT PRE-RELEASE BENCHMARK · DIRECT COLAB", flush=True)
+    print("LINEBORN STRICT PRE-RELEASE BENCHMARK · DIRECT COLAB · v5", flush=True)
     print("=" * 80, flush=True)
     gpu_name, vram_mb = gpu_info()
     print(f"GPU: {gpu_name} ({vram_mb} MiB)", flush=True)
     print("Models:", ", ".join(models), flush=True)
     print("Source:", git_sha(), flush=True)
     print("Mode: direct Colab; no desktop app, tunnel, SIP, or remote pairing", flush=True)
+    print("Speech policy: internal control/tool syntax is a hard release blocker", flush=True)
 
     legacy.apt_setup()
     legacy.install_ollama()
@@ -98,9 +98,9 @@ def main() -> int:
     legacy.validate_stack(python)
     legacy.start_ollama()
 
-    runner = BENCH / "dialforge_final_release_acceptance_v4_kaggle.py"
+    runner = BENCH / "lineborn_release_acceptance_v5.py"
     if not runner.exists():
-        raise RuntimeError(f"Frozen release-gate runner missing: {runner}")
+        raise RuntimeError(f"Lineborn v5 release-gate runner missing: {runner}")
 
     shutil.rmtree(OUT, ignore_errors=True)
     OUT.mkdir(parents=True, exist_ok=True)
@@ -127,7 +127,7 @@ def main() -> int:
 
     report = json.loads(RAW_REPORT.read_text("utf-8"))
     report["product"] = "Lineborn"
-    report["benchmark"] = "lineborn-strict-prerelease-direct-colab-v1"
+    report["benchmark"] = "lineborn-strict-prerelease-direct-colab-v2"
     report["benchmark_mode"] = "direct-colab-no-desktop"
     report["source_commit"] = git_sha()
     report["benchmark_wall_seconds"] = round(elapsed, 2)
@@ -139,7 +139,6 @@ def main() -> int:
     )
     REPORT.write_text(json.dumps(report, indent=2), encoding="utf-8")
 
-    # Keep the raw report for auditability, but provide Lineborn-branded canonical output.
     if ZIP.exists():
         ZIP.unlink()
     shutil.make_archive(str(ZIP.with_suffix("")), "zip", root_dir=str(OUT))
@@ -158,12 +157,18 @@ def main() -> int:
             f"sales {sales.get('product_score')} | tools {tools.get('accuracy')} | "
             f"TTFT {stream.get('ttft_median_ms')} ms | "
             f"voice median {voice.get('voice_start_median_ms')} ms | "
-            f"voice p95 {voice.get('voice_start_p95_ms')} ms",
+            f"voice p95 {voice.get('voice_start_p95_ms')} ms | "
+            f"raw control leaks {sales.get('raw_control_leak_attempts', 0)} | "
+            f"spoken leaks {sales.get('spoken_control_leaks', 0)}",
             flush=True,
         )
         failed = [k for k, v in (data.get("gate_checks") or {}).items() if not v]
         if failed:
             print("  failed gates:", ", ".join(failed), flush=True)
+
+    spoken = (report.get("regressions") or {}).get("spoken_safety") or {}
+    if spoken:
+        print(f"Spoken-safety regression: {spoken.get('accuracy')}%", flush=True)
 
     print(f"\nCanonical JSON: {REPORT}", flush=True)
     print(f"Full results ZIP: {ZIP}", flush=True)
