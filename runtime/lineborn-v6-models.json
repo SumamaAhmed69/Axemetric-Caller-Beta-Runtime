@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "family": "lineborn-v6",
+  "base_model": "Qwen/Qwen3-4B-Instruct-2507",
+  "adapter_stage": "dpo",
+  "profiles": {
+    "balanced": {
+      "ollama_model": "lineborn-v6-balanced",
+      "quantization": "Q4_K_M",
+      "gguf": "lineborn-v6-balanced-q4_k_m.gguf"
+    },
+    "performance": {
+      "ollama_model": "lineborn-v6-performance",
+      "quantization": "Q8_0",
+      "gguf": "lineborn-v6-performance-q8_0.gguf"
+    }
+  },
+  "release_policy": "Do not replace shipping runtime tags until both profiles pass benchmarks/lineborn_trained_release_acceptance_v6.py with zero critical failures and zero spoken/raw control leaks."
+}
