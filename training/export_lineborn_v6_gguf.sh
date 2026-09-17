@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
+
+STAGE="bootstrap"
+trap 'code=$?; echo >&2; echo "❌ Lineborn v6 export failed during stage: $STAGE (exit $code)" >&2; echo "Command: $BASH_COMMAND" >&2; exit $code' ERR
 
 BASE_MODEL="${LINEBORN_BASE_MODEL:-Qwen/Qwen3-4B-Instruct-2507}"
 ADAPTER_DIR="${1:-training/output/lineborn-sales-dpo/adapter}"
@@ -7,12 +10,22 @@ OUTPUT_DIR="${2:-training/output/lineborn-v6-export}"
 BALANCED_QUANT="${LINEBORN_BALANCED_QUANT:-Q4_K_M}"
 PERFORMANCE_QUANT="${LINEBORN_PERFORMANCE_QUANT:-Q8_0}"
 LLAMA_CPP_REF="${LLAMA_CPP_REF:-972d2313bc0bf0a45f634f77d95c9fb03aeab12c}"
-LLAMA_CPP_DIR="${LLAMA_CPP_DIR:-$OUTPUT_DIR/llama.cpp}"
+PYTHON_BIN="${LINEBORN_PYTHON:-$(command -v python3 || command -v python)}"
 KEEP_F16="${LINEBORN_KEEP_F16:-0}"
 
-ADAPTER_DIR="$(python -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$ADAPTER_DIR")"
-OUTPUT_DIR="$(python -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$OUTPUT_DIR")"
-LLAMA_CPP_DIR="$(python -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$LLAMA_CPP_DIR")"
+if [[ -z "${PYTHON_BIN:-}" ]]; then
+  echo "No Python interpreter found" >&2
+  exit 127
+fi
+
+echo "Using Python: $PYTHON_BIN"
+"$PYTHON_BIN" --version
+
+ADAPTER_DIR="$("$PYTHON_BIN" -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$ADAPTER_DIR")"
+OUTPUT_DIR="$("$PYTHON_BIN" -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$OUTPUT_DIR")"
+LLAMA_CPP_DIR="${LLAMA_CPP_DIR:-$OUTPUT_DIR/llama.cpp}"
+LLAMA_CPP_DIR="$("$PYTHON_BIN" -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$LLAMA_CPP_DIR")"
+
 MERGED_DIR="$OUTPUT_DIR/merged-hf"
 F16_GGUF="$OUTPUT_DIR/lineborn-v6-f16.gguf"
 BALANCED_GGUF="$OUTPUT_DIR/lineborn-v6-balanced-q4_k_m.gguf"
@@ -20,26 +33,36 @@ PERFORMANCE_GGUF="$OUTPUT_DIR/lineborn-v6-performance-q8_0.gguf"
 
 mkdir -p "$OUTPUT_DIR"
 
+STAGE="adapter verification"
 if [[ ! -f "$ADAPTER_DIR/adapter_config.json" || ! -f "$ADAPTER_DIR/adapter_model.safetensors" ]]; then
   echo "Missing LoRA adapter files in $ADAPTER_DIR" >&2
   exit 2
 fi
 
-python - "$ADAPTER_DIR/adapter_config.json" "$BASE_MODEL" <<'PY'
+"$PYTHON_BIN" - "$ADAPTER_DIR/adapter_config.json" "$BASE_MODEL" <<'PY'
 import json, sys
 cfg = json.load(open(sys.argv[1], encoding="utf-8"))
 actual = cfg.get("base_model_name_or_path")
 expected = sys.argv[2]
 if actual != expected:
     raise SystemExit(f"adapter base mismatch: {actual!r} != {expected!r}")
-print(f"Adapter base verified: {actual}")
+print(f"Adapter base verified: {actual}", flush=True)
 PY
 
-python training/merge_sales_adapter.py \
-  --base-model "$BASE_MODEL" \
-  --adapter "$ADAPTER_DIR" \
-  --output "$MERGED_DIR"
+STAGE="LoRA merge"
+if [[ -f "$MERGED_DIR/config.json" ]] && compgen -G "$MERGED_DIR/*.safetensors" > /dev/null; then
+  echo "✅ Merged HF model already exists; resuming from it: $MERGED_DIR"
+else
+  rm -rf "$MERGED_DIR"
+  "$PYTHON_BIN" training/merge_sales_adapter.py \
+    --base-model "$BASE_MODEL" \
+    --adapter "$ADAPTER_DIR" \
+    --output "$MERGED_DIR" \
+    --device auto \
+    --dtype auto
+fi
 
+STAGE="llama.cpp checkout"
 if [[ ! -d "$LLAMA_CPP_DIR/.git" ]]; then
   rm -rf "$LLAMA_CPP_DIR"
   mkdir -p "$LLAMA_CPP_DIR"
@@ -49,15 +72,22 @@ fi
 git -C "$LLAMA_CPP_DIR" fetch --depth 1 origin "$LLAMA_CPP_REF"
 git -C "$LLAMA_CPP_DIR" checkout --detach -f FETCH_HEAD
 
+STAGE="llama.cpp Python dependencies"
 if [[ -f "$LLAMA_CPP_DIR/requirements.txt" ]]; then
-  python -m pip install -q -r "$LLAMA_CPP_DIR/requirements.txt"
+  "$PYTHON_BIN" -m pip install -q -r "$LLAMA_CPP_DIR/requirements.txt"
 fi
 
-python "$LLAMA_CPP_DIR/convert_hf_to_gguf.py" \
-  "$MERGED_DIR" \
-  --outfile "$F16_GGUF" \
-  --outtype f16
+STAGE="HF to F16 GGUF conversion"
+if [[ -s "$F16_GGUF" ]]; then
+  echo "✅ F16 GGUF already exists; resuming: $F16_GGUF"
+else
+  "$PYTHON_BIN" "$LLAMA_CPP_DIR/convert_hf_to_gguf.py" \
+    "$MERGED_DIR" \
+    --outfile "$F16_GGUF" \
+    --outtype f16
+fi
 
+STAGE="llama.cpp quantizer build"
 cmake -S "$LLAMA_CPP_DIR" -B "$LLAMA_CPP_DIR/build" -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DLLAMA_CURL=OFF
 cmake --build "$LLAMA_CPP_DIR/build" --config Release -j2 --target llama-quantize
 
@@ -77,9 +107,21 @@ if [[ -z "$QUANTIZER" ]]; then
   exit 3
 fi
 
-"$QUANTIZER" "$F16_GGUF" "$BALANCED_GGUF" "$BALANCED_QUANT"
-"$QUANTIZER" "$F16_GGUF" "$PERFORMANCE_GGUF" "$PERFORMANCE_QUANT"
+STAGE="Balanced Q4_K_M quantization"
+if [[ -s "$BALANCED_GGUF" ]]; then
+  echo "✅ Balanced GGUF already exists; resuming: $BALANCED_GGUF"
+else
+  "$QUANTIZER" "$F16_GGUF" "$BALANCED_GGUF" "$BALANCED_QUANT"
+fi
 
+STAGE="Performance Q8_0 quantization"
+if [[ -s "$PERFORMANCE_GGUF" ]]; then
+  echo "✅ Performance GGUF already exists; resuming: $PERFORMANCE_GGUF"
+else
+  "$QUANTIZER" "$F16_GGUF" "$PERFORMANCE_GGUF" "$PERFORMANCE_QUANT"
+fi
+
+STAGE="Ollama Modelfiles"
 cat > "$OUTPUT_DIR/Modelfile.balanced" <<EOF
 FROM ./$(basename "$BALANCED_GGUF")
 PARAMETER num_ctx 4096
@@ -89,14 +131,15 @@ FROM ./$(basename "$PERFORMANCE_GGUF")
 PARAMETER num_ctx 4096
 EOF
 
-python - "$OUTPUT_DIR" "$BASE_MODEL" "$BALANCED_QUANT" "$PERFORMANCE_QUANT" "$LLAMA_CPP_REF" <<'PY'
+STAGE="deployment manifest"
+"$PYTHON_BIN" - "$OUTPUT_DIR" "$BASE_MODEL" "$BALANCED_QUANT" "$PERFORMANCE_QUANT" "$LLAMA_CPP_REF" <<'PY'
 import hashlib, json, pathlib, sys
 root = pathlib.Path(sys.argv[1])
 
 def sha(path):
     h = hashlib.sha256()
-    with path.open('rb') as f:
-        for block in iter(lambda: f.read(4*1024*1024), b''):
+    with path.open("rb") as f:
+        for block in iter(lambda: f.read(4*1024*1024), b""):
             h.update(block)
     return h.hexdigest()
 
@@ -124,7 +167,7 @@ if [[ "$KEEP_F16" != "1" ]]; then
 fi
 
 echo
-echo "Lineborn v6 GGUF export complete."
+echo "✅ Lineborn v6 GGUF export complete."
 echo "Balanced:    $BALANCED_GGUF"
 echo "Performance: $PERFORMANCE_GGUF"
 echo "Ollama: cd '$OUTPUT_DIR' && ollama create lineborn-v6-balanced -f Modelfile.balanced"
