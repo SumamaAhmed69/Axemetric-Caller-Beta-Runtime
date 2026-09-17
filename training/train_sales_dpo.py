@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
+import math
 from pathlib import Path
+from typing import Any
 
 import torch
 from datasets import load_dataset
@@ -12,6 +15,23 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import DPOConfig, DPOTrainer
 
 BASE_MODEL = "Qwen/Qwen3-4B-Instruct-2507"
+
+
+def compatible_init_kwargs(cls, values: dict[str, Any], aliases: dict[str, str] | None = None) -> dict[str, Any]:
+    aliases = aliases or {}
+    params = inspect.signature(cls.__init__).parameters
+    out: dict[str, Any] = {}
+    for key, value in values.items():
+        if key in params:
+            out[key] = value
+            continue
+        alias = aliases.get(key)
+        if alias and alias in params:
+            out[alias] = value
+            print(f"DPOConfig compatibility: {key} -> {alias}")
+            continue
+        print(f"DPOConfig compatibility: omitting unsupported option {key}={value!r}")
+    return out
 
 
 def main() -> int:
@@ -66,32 +86,51 @@ def main() -> int:
 
     dataset = dataset.map(format_row, remove_columns=dataset.column_names)
     split = dataset.train_test_split(test_size=0.08, seed=args.seed)
+    if not len(split["train"]) or not len(split["test"]):
+        raise SystemExit(f"DPO split is empty: train={len(split['train'])} eval={len(split['test'])}")
+
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
+    optimizer_steps_per_epoch = max(1, math.ceil(len(split["train"]) / max(1, args.grad_accum)))
+    total_optimizer_steps = max(1, math.ceil(optimizer_steps_per_epoch * args.epochs))
+    warmup_steps = max(1, round(total_optimizer_steps * 0.05))
 
+    config_values = {
+        "output_dir": str(output),
+        "num_train_epochs": args.epochs,
+        "per_device_train_batch_size": 1,
+        "per_device_eval_batch_size": 1,
+        "gradient_accumulation_steps": args.grad_accum,
+        "learning_rate": args.lr,
+        "beta": args.beta,
+        "max_length": args.max_length,
+        "max_prompt_length": min(1408, args.max_length - 128),
+        "logging_steps": 5,
+        "eval_strategy": "epoch",
+        "save_strategy": "epoch",
+        "save_total_limit": 2,
+        "gradient_checkpointing": True,
+        "fp16": compute_dtype == torch.float16,
+        "bf16": compute_dtype == torch.bfloat16,
+        "optim": "paged_adamw_8bit",
+        "warmup_steps": warmup_steps,
+        "lr_scheduler_type": "cosine",
+        "report_to": "none",
+        "seed": args.seed,
+    }
     config = DPOConfig(
-        output_dir=str(output),
-        num_train_epochs=args.epochs,
-        per_device_train_batch_size=1,
-        per_device_eval_batch_size=1,
-        gradient_accumulation_steps=args.grad_accum,
-        learning_rate=args.lr,
-        beta=args.beta,
-        max_length=args.max_length,
-        max_prompt_length=min(1536, args.max_length - 128),
-        logging_steps=5,
-        eval_strategy="epoch",
-        save_strategy="epoch",
-        save_total_limit=2,
-        gradient_checkpointing=True,
-        fp16=compute_dtype == torch.float16,
-        bf16=compute_dtype == torch.bfloat16,
-        optim="paged_adamw_8bit",
-        warmup_ratio=0.05,
-        lr_scheduler_type="cosine",
-        report_to="none",
-        seed=args.seed,
+        **compatible_init_kwargs(
+            DPOConfig,
+            config_values,
+            aliases={"eval_strategy": "evaluation_strategy"},
+        )
     )
+    print(
+        f"DPO schedule: {len(split['train'])} train / {len(split['test'])} eval, "
+        f"~{total_optimizer_steps} optimizer updates, {warmup_steps} warmup steps",
+        flush=True,
+    )
+
     trainer = DPOTrainer(
         model=model,
         ref_model=None,
@@ -102,8 +141,13 @@ def main() -> int:
     )
     train_result = trainer.train()
     eval_result = trainer.evaluate()
-    trainer.model.save_pretrained(output / "adapter")
-    tokenizer.save_pretrained(output / "adapter")
+    adapter_dir = output / "adapter"
+    trainer.model.save_pretrained(adapter_dir)
+    tokenizer.save_pretrained(adapter_dir)
+    adapter_weights = adapter_dir / "adapter_model.safetensors"
+    if not adapter_weights.is_file() or adapter_weights.stat().st_size <= 1024 * 1024:
+        raise SystemExit("DPO training completed but a valid adapter_model.safetensors was not produced")
+
     metrics = {
         "base_model": args.base_model,
         "sft_adapter": str(args.adapter),
@@ -112,7 +156,9 @@ def main() -> int:
         "train_loss": train_result.metrics.get("train_loss"),
         "eval_loss": eval_result.get("eval_loss"),
         "beta": args.beta,
+        "warmup_steps": warmup_steps,
         "seed": args.seed,
+        "adapter_bytes": adapter_weights.stat().st_size,
     }
     (output / "training_metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     print(json.dumps(metrics, indent=2))
