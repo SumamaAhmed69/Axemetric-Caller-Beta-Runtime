@@ -17,10 +17,11 @@ from trl import DPOConfig, DPOTrainer
 BASE_MODEL = "Qwen/Qwen3-4B-Instruct-2507"
 
 
-def compatible_init_kwargs(cls, values: dict[str, Any], aliases: dict[str, str] | None = None) -> dict[str, Any]:
+def compatible_init_kwargs(cls, values: dict[str, Any], aliases: dict[str, str] | None = None, label: str | None = None) -> dict[str, Any]:
     aliases = aliases or {}
     params = inspect.signature(cls.__init__).parameters
     out: dict[str, Any] = {}
+    prefix = label or cls.__name__
     for key, value in values.items():
         if key in params:
             out[key] = value
@@ -28,9 +29,9 @@ def compatible_init_kwargs(cls, values: dict[str, Any], aliases: dict[str, str] 
         alias = aliases.get(key)
         if alias and alias in params:
             out[alias] = value
-            print(f"DPOConfig compatibility: {key} -> {alias}")
+            print(f"{prefix} compatibility: {key} -> {alias}")
             continue
-        print(f"DPOConfig compatibility: omitting unsupported option {key}={value!r}")
+        print(f"{prefix} compatibility: omitting unsupported option {key}={value!r}")
     return out
 
 
@@ -123,6 +124,7 @@ def main() -> int:
             DPOConfig,
             config_values,
             aliases={"eval_strategy": "evaluation_strategy"},
+            label="DPOConfig",
         )
     )
     print(
@@ -131,13 +133,21 @@ def main() -> int:
         flush=True,
     )
 
+    trainer_values: dict[str, Any] = {
+        "model": model,
+        "ref_model": None,
+        "args": config,
+        "train_dataset": split["train"],
+        "eval_dataset": split["test"],
+        "processing_class": tokenizer,
+    }
     trainer = DPOTrainer(
-        model=model,
-        ref_model=None,
-        args=config,
-        train_dataset=split["train"],
-        eval_dataset=split["test"],
-        processing_class=tokenizer,
+        **compatible_init_kwargs(
+            DPOTrainer,
+            trainer_values,
+            aliases={"processing_class": "tokenizer"},
+            label="DPOTrainer",
+        )
     )
     train_result = trainer.train()
     eval_result = trainer.evaluate()
