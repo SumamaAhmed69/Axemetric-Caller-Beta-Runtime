@@ -6,6 +6,7 @@ on:
       - "training/verify_lineborn_v6_export.py"
       - "training/export_lineborn_v6_gguf.sh"
       - "training/merge_sales_adapter.py"
+      - "training/Lineborn_V6_Deploy_Colab.ipynb"
       - "benchmarks/lineborn_trained_release_acceptance_v6.py"
       - "runtime/lineborn-v6-models.json"
       - ".github/workflows/validate-lineborn-v6-deployment.yml"
@@ -25,6 +26,25 @@ jobs:
             training/verify_lineborn_v6_export.py \
             training/merge_sales_adapter.py \
             benchmarks/lineborn_trained_release_acceptance_v6.py
+      - name: Colab notebook validation
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path('training/Lineborn_V6_Deploy_Colab.ipynb')
+          nb = json.loads(path.read_text(encoding='utf-8'))
+          assert nb['nbformat'] == 4
+          assert len(nb.get('cells', [])) >= 10
+          for index, cell in enumerate(nb['cells']):
+              if cell.get('cell_type') == 'code':
+                  compile(''.join(cell.get('source', [])), f'cell-{index}', 'exec')
+          text = path.read_text(encoding='utf-8')
+          assert 'Qwen/Qwen3-4B-Instruct-2507' in text
+          assert 'ea657b97036665d0e9cbd95b09523f0a224ce40485b3fc9e02361b816e09f406' in text
+          assert 'lineborn-v6-balanced-q4_k_m.gguf' in text
+          assert 'lineborn-v6-performance-q8_0.gguf' in text
+          print('Colab notebook JSON and code cells OK')
+          PY
       - name: Shell syntax
         run: bash -n training/export_lineborn_v6_gguf.sh
       - name: Model manifest contract
