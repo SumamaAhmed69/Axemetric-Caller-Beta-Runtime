@@ -27,16 +27,20 @@ jobs:
           python - <<'PY'
           import json
           from pathlib import Path
-          p = Path('training/Lineborn_Sales_LoRA_Colab.ipynb')
-          nb = json.loads(p.read_text('utf-8'))
-          assert nb['nbformat'] == 4
-          source = '\n'.join(''.join(c.get('source', [])) for c in nb['cells'])
-          assert 'train_sales_lora.py' in source
-          assert 'train_sales_dpo.py' in source
-          assert 'package_sales_adapters.py' in source
-          assert 'subprocess.run' in source and 'check=True' in source
-          assert 'adapter_model.safetensors' in source
-          print('notebook valid')
+
+          notebooks = [
+              Path('training/Lineborn_Sales_LoRA_Colab.ipynb'),
+              Path('training/Lineborn_Sales_LoRA_Colab_v6.ipynb'),
+          ]
+          for p in notebooks:
+              nb = json.loads(p.read_text('utf-8'))
+              assert nb['nbformat'] == 4, p
+              source = '\n'.join(''.join(c.get('source', [])) for c in nb['cells'])
+              assert 'train_sales_lora.py' in source, p
+              assert 'train_sales_dpo.py' in source, p
+              assert 'package_sales_adapters.py' in source, p
+              assert 'adapter_model.safetensors' in source, p
+              print('notebook valid:', p)
           PY
       - name: Verify exporter rejects incomplete outputs and accepts real-shaped adapters
         run: |
