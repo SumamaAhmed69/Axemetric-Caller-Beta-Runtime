@@ -42,10 +42,12 @@ python training/merge_sales_adapter.py \
 
 if [[ ! -d "$LLAMA_CPP_DIR/.git" ]]; then
   rm -rf "$LLAMA_CPP_DIR"
-  git clone https://github.com/ggml-org/llama.cpp.git "$LLAMA_CPP_DIR"
+  mkdir -p "$LLAMA_CPP_DIR"
+  git -C "$LLAMA_CPP_DIR" init -q
+  git -C "$LLAMA_CPP_DIR" remote add origin https://github.com/ggml-org/llama.cpp.git
 fi
 git -C "$LLAMA_CPP_DIR" fetch --depth 1 origin "$LLAMA_CPP_REF"
-git -C "$LLAMA_CPP_DIR" checkout --detach FETCH_HEAD
+git -C "$LLAMA_CPP_DIR" checkout --detach -f FETCH_HEAD
 
 if [[ -f "$LLAMA_CPP_DIR/requirements.txt" ]]; then
   python -m pip install -q -r "$LLAMA_CPP_DIR/requirements.txt"
