@@ -1,0 +1,41 @@
+name: Validate Lineborn v6 deployment pipeline
+
+on:
+  push:
+    paths:
+      - "training/verify_lineborn_v6_export.py"
+      - "training/export_lineborn_v6_gguf.sh"
+      - "training/merge_sales_adapter.py"
+      - "benchmarks/lineborn_trained_release_acceptance_v6.py"
+      - "runtime/lineborn-v6-models.json"
+      - ".github/workflows/validate-lineborn-v6-deployment.yml"
+  workflow_dispatch:
+
+jobs:
+  static-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Python syntax
+        run: |
+          python -m py_compile \
+            training/verify_lineborn_v6_export.py \
+            training/merge_sales_adapter.py \
+            benchmarks/lineborn_trained_release_acceptance_v6.py
+      - name: Shell syntax
+        run: bash -n training/export_lineborn_v6_gguf.sh
+      - name: Model manifest contract
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          doc = json.loads(Path('runtime/lineborn-v6-models.json').read_text())
+          assert doc['base_model'] == 'Qwen/Qwen3-4B-Instruct-2507'
+          assert set(doc['profiles']) == {'balanced', 'performance'}
+          assert doc['profiles']['balanced']['quantization'] == 'Q4_K_M'
+          assert doc['profiles']['performance']['quantization'] == 'Q8_0'
+          print('Lineborn v6 deployment contract OK')
+          PY
