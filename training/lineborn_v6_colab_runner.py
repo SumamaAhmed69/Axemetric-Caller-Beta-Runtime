@@ -179,13 +179,15 @@ def verify_extract() -> Path:
 
 def build_candidates(adapter: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
-    if EXPORT_DIR.exists():
-        shutil.rmtree(EXPORT_DIR)
+    # Intentionally preserve EXPORT_DIR so a failed Colab build can resume from
+    # an already-merged model, F16 GGUF, or completed quantization.
+    EXPORT_DIR.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env["LINEBORN_BASE_MODEL"] = BASE_MODEL
     env["LINEBORN_BALANCED_QUANT"] = "Q4_K_M"
     env["LINEBORN_PERFORMANCE_QUANT"] = "Q8_0"
     env["LINEBORN_KEEP_F16"] = "0"
+    env["LINEBORN_PYTHON"] = sys.executable
     run(
         [
             "bash",
