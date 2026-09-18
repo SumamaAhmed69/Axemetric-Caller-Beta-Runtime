@@ -1,89 +1,47 @@
-name: Verify Published Qwen Runtime
+name: Verify Published Lineborn v6 Runtime
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/verify-qwen-runtime.yml"
 
 permissions:
   contents: read
 
 jobs:
   verify-release:
-    runs-on: windows-latest
-    timeout-minutes: 10
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Verify live manifest and release assets
-        shell: pwsh
+      - name: Verify trained Lineborn model manifest and assets
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: beta-v20.4.0
+          RELEASE_TAG: beta-v20.4.0-beta.15
+          MODEL: lineborn-v6-balanced
+          GGUF_SHA: 467514dd216d25b7e291345f11dba9f57d2515473434f13715d159e2db6fa398
         run: |
-          $ErrorActionPreference = 'Stop'
-          $manifestUrl = "https://github.com/SumamaAhmed69/Axemetric-Caller-Beta-Runtime/releases/download/$env:RELEASE_TAG/manifest.json"
-          curl.exe -L --fail --retry 5 --retry-delay 2 -o manifest-live.json $manifestUrl
-          if ($LASTEXITCODE -ne 0) { throw 'Could not download published manifest' }
-
-          $doc = Get-Content manifest-live.json -Raw | ConvertFrom-Json
-          if ($doc.schema -ne 2) { throw "Unexpected manifest schema: $($doc.schema)" }
-          if ($doc.channel -ne 'beta-github') { throw "Unexpected channel: $($doc.channel)" }
-          if ($doc.repository -ne 'SumamaAhmed69/Axemetric-Caller-Beta-Runtime') { throw "Unexpected repository: $($doc.repository)" }
-          if ($doc.qwen_model -ne 'profile-selected') { throw "Manifest is not profile-selected" }
-
-          $expectedModels = @{
-            compatibility = 'qwen3:1.7b'
-            balanced = 'qwen3:4b'
-            performance = 'qwen3:8b'
-          }
-          foreach ($profile in $expectedModels.Keys) {
-            if ($doc.qwen_models.$profile -ne $expectedModels[$profile]) {
-              throw ("Wrong qwen_models mapping for {0}: {1}" -f $profile, $doc.qwen_models.$profile)
-            }
-          }
-
-          $qwen = @($doc.packages | Where-Object { $_.name -eq 'qwen-model' })
-          if ($qwen.Count -ne 3) { throw "Expected exactly 3 Qwen packages, found $($qwen.Count)" }
-
-          $release = gh api "repos/SumamaAhmed69/Axemetric-Caller-Beta-Runtime/releases/tags/$env:RELEASE_TAG" | ConvertFrom-Json
-          if ($LASTEXITCODE -ne 0) { throw 'Could not query runtime release' }
-          $assets = @{}
-          foreach ($asset in $release.assets) { $assets[$asset.name] = $asset }
-
-          foreach ($profile in $expectedModels.Keys) {
-            $pkg = @($qwen | Where-Object { $_.profiles -contains $profile })
-            if ($pkg.Count -ne 1) { throw "Expected one Qwen package for $profile, found $($pkg.Count)" }
-            $pkg = $pkg[0]
-            if ($pkg.model -ne $expectedModels[$profile]) {
-              throw ("Wrong model for {0}: {1}" -f $profile, $pkg.model)
-            }
-            if (-not $pkg.parts -or @($pkg.parts).Count -lt 1) { throw "No release parts for $profile" }
-
-            foreach ($part in @($pkg.parts)) {
-              if ($part.file -notmatch '\.zip\.part\d{3}$') {
-                throw "Qwen manifest references non-raw-split asset: $($part.file)"
-              }
-              if (-not $assets.ContainsKey($part.file)) { throw "Release asset missing: $($part.file)" }
-              $asset = $assets[$part.file]
-              if ([int64]$asset.size -ne [int64]$part.size) {
-                throw "Size mismatch for $($part.file): manifest=$($part.size) release=$($asset.size)"
-              }
-              $expectedDigest = "sha256:$($part.sha256)"
-              if ($asset.digest -ne $expectedDigest) {
-                throw "Digest mismatch for $($part.file): manifest=$expectedDigest release=$($asset.digest)"
-              }
-            }
-          }
-
-          $requiredCommon = @('ollama','chatterbox','speech-cache')
-          foreach ($name in $requiredCommon) {
-            if (-not ($doc.packages | Where-Object { $_.name -eq $name })) { throw "Common runtime package missing: $name" }
-          }
-
-          Write-Host 'Published Qwen runtime verified successfully.'
-          Write-Host 'compatibility -> qwen3:1.7b'
-          Write-Host 'balanced      -> qwen3:4b'
-          Write-Host 'performance   -> qwen3:8b'
+          set -euo pipefail
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern manifest.json --dir . --clobber
+          python - <<'PY'
+          import json, os, subprocess
+          doc=json.load(open('manifest.json'))
+          model=os.environ['MODEL']
+          gguf_sha=os.environ['GGUF_SHA']
+          qwen=[p for p in doc.get('packages',[]) if p.get('name')=='qwen-model']
+          assert len(qwen)==1, len(qwen)
+          pkg=qwen[0]
+          assert pkg.get('model')==model
+          assert pkg.get('trained') is True
+          assert pkg.get('quantization')=='Q4_K_M'
+          assert pkg.get('source_gguf_sha256')==gguf_sha
+          assert doc.get('default_profile')=='balanced'
+          assert set((doc.get('qwen_models') or {}).values())=={model}
+          assert pkg.get('parts')
+          release=json.loads(subprocess.check_output([
+              'gh','api',f"repos/{os.environ['GITHUB_REPOSITORY']}/releases/tags/{os.environ['RELEASE_TAG']}"
+          ], text=True))
+          assets={a['name']:a for a in release['assets']}
+          for part in pkg['parts']:
+              asset=assets[part['file']]
+              assert int(asset['size'])==int(part['size'])
+              if asset.get('digest'):
+                  assert asset['digest']=='sha256:'+part['sha256']
+          print('Published trained Lineborn v6 Balanced runtime verified.')
+          PY

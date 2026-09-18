@@ -17,6 +17,8 @@ on:
       - "benchmarks/dialforge_final_release_acceptance_v4.py"
       - "benchmarks/lineborn_release_acceptance_v5.py"
       - "runtime/lineborn-v6-models.json"
+      - "runtime/publish_lineborn_v6_balanced.ps1"
+      - "model-source/README.md"
       - ".github/workflows/validate-lineborn-v6-deployment.yml"
   workflow_dispatch:
 
@@ -104,6 +106,28 @@ jobs:
           PY
       - name: Shell syntax
         run: bash -n training/export_lineborn_v6_gguf.sh
+      - name: PowerShell publisher syntax and contract
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'runtime/publish_lineborn_v6_balanced.ps1'),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count) { $errors | Format-List | Out-String | Write-Error; exit 1 }
+          $source = Get-Content 'runtime/publish_lineborn_v6_balanced.ps1' -Raw
+          foreach ($required in @(
+            'lineborn-v6-balanced-q4_k_m.gguf',
+            '467514dd216d25b7e291345f11dba9f57d2515473434f13715d159e2db6fa398',
+            'lineborn-v6-balanced',
+            'beta-v20.4.0-beta.15',
+            'source_gguf_sha256'
+          )) {
+            if (-not $source.Contains($required)) { throw "Publisher contract missing: $required" }
+          }
+          Write-Host 'Lineborn v6 local publisher syntax/contract OK'
       - name: Model manifest contract
         run: |
           python - <<'PY'

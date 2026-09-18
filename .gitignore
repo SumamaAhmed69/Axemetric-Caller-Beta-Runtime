@@ -1,0 +1,4 @@
+# Large local model sources are never committed.
+model-source/*.gguf
+model-source/*.bin
+.lineborn-v6-publish/
