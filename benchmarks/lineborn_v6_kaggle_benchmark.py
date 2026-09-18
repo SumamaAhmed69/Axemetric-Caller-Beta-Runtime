@@ -19,9 +19,12 @@ RAW_REPORT = OUT / "dialforge-final-release-v4.json"
 REPORT = OUT / "lineborn-v6-release-acceptance.json"
 ZIP = ROOT / "lineborn-v6-release-acceptance-results.zip"
 
-BALANCED = MODEL_DIR / "lineborn-v6-balanced-q4_k_m.gguf"
-PERFORMANCE = MODEL_DIR / "lineborn-v6-performance-q8_0.gguf"
+BALANCED_NAME = "lineborn-v6-balanced-q4_k_m.gguf"
+PERFORMANCE_NAME = "lineborn-v6-performance-q8_0.gguf"
 MODELS = ("lineborn-v6-balanced", "lineborn-v6-performance")
+
+BALANCED = MODEL_DIR / BALANCED_NAME
+PERFORMANCE = MODEL_DIR / PERFORMANCE_NAME
 
 legacy.ROOT = SCRATCH
 legacy.VENV = SCRATCH / "py311"
@@ -35,11 +38,47 @@ def run(cmd, *, cwd=None, env=None, check=True):
     return subprocess.run(cmd, cwd=cwd, env=env, check=check)
 
 
+def _find_artifact(name: str) -> pathlib.Path | None:
+    preferred = MODEL_DIR / name
+    if preferred.is_file():
+        return preferred
+    input_root = pathlib.Path("/kaggle/input")
+    if input_root.exists():
+        matches = [p for p in input_root.rglob(name) if p.is_file()]
+        if matches:
+            return matches[0]
+    return None
+
+
 def ensure_inputs() -> None:
-    missing = [p for p in (BALANCED, PERFORMANCE, MODEL_DIR / "Modelfile.balanced", MODEL_DIR / "Modelfile.performance") if not p.is_file()]
+    global MODEL_DIR, BALANCED, PERFORMANCE
+
+    balanced = _find_artifact(BALANCED_NAME)
+    performance = _find_artifact(PERFORMANCE_NAME)
+    if not balanced or not performance:
+        raise RuntimeError(
+            "Finished Lineborn GGUFs are not attached. In Kaggle click Add Input and add the saved "
+            "output of the successful Lineborn build notebook, then rerun this cell."
+        )
+
+    # The Modelfiles are expected beside the GGUFs in either /kaggle/working or
+    # the attached notebook-output input directory.
+    source_dir = balanced.parent
+    required = [
+        balanced,
+        performance,
+        source_dir / "Modelfile.balanced",
+        source_dir / "Modelfile.performance",
+    ]
+    missing = [p for p in required if not p.is_file()]
     if missing:
         raise RuntimeError("Missing trained Lineborn output(s): " + ", ".join(str(p) for p in missing))
+
+    MODEL_DIR = source_dir
+    BALANCED = balanced
+    PERFORMANCE = performance
     print("Trained GGUF inputs found:", flush=True)
+    print("  source:", MODEL_DIR, flush=True)
     print(f"  Balanced:    {BALANCED.stat().st_size / 1024**3:.3f} GiB", flush=True)
     print(f"  Performance: {PERFORMANCE.stat().st_size / 1024**3:.3f} GiB", flush=True)
 
