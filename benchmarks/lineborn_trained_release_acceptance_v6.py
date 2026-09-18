@@ -7,6 +7,8 @@ merged Lineborn v6 brain at different GGUF quantizations.
 """
 from __future__ import annotations
 
+import subprocess
+
 import lineborn_release_acceptance_v5 as v5
 
 
@@ -26,6 +28,20 @@ PRODUCTION_OPTIONS = {
 
 gate.MODELS = MODELS
 gate.PRODUCTION_OPTIONS = PRODUCTION_OPTIONS
+
+def require_local_model(model: str) -> None:
+    """Release candidates are local Lineborn GGUF imports, not registry models."""
+    result = subprocess.run(
+        ["ollama", "show", model],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Local Ollama model {model!r} is missing. Import the Lineborn GGUF before running v6 acceptance."
+        )
+
+gate.pull = require_local_model
 
 if __name__ == "__main__":
     raise SystemExit(gate.main())
