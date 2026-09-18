@@ -117,6 +117,20 @@ def prepare_environment() -> None:
     os.environ.setdefault("HF_HOME", "/kaggle/tmp/lineborn-hf-cache")
     os.environ.setdefault("TRANSFORMERS_CACHE", "/kaggle/tmp/lineborn-hf-cache")
     run([sys.executable, "-m", "pip", "install", "-q", "-r", "training/requirements-colab.txt"])
+
+    # Kaggle currently preinstalls an old torchao build that PEFT 0.21+ detects
+    # and rejects before a normal BF16 LoRA adapter can even be injected.
+    # Lineborn does not use TorchAO for this merge; GGUF quantization is handled
+    # later by llama.cpp. Remove the optional stale package so PEFT follows its
+    # standard torch.nn.Linear LoRA path.
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+        torchao_version = version("torchao")
+        print(f"Removing Kaggle preinstalled torchao {torchao_version}; not needed for Lineborn BF16 merge.", flush=True)
+        run([sys.executable, "-m", "pip", "uninstall", "-y", "torchao"])
+    except PackageNotFoundError:
+        print("torchao is not installed; continuing.", flush=True)
+
     missing = [tool for tool in ("cmake", "g++", "git") if shutil.which(tool) is None]
     if missing:
         print("Installing missing system tools:", ", ".join(missing), flush=True)
