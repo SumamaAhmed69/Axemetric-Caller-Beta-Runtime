@@ -12,6 +12,7 @@ on:
       - "training/lineborn_v6_kaggle_runner.py"
       - "training/Lineborn_V6_Deploy_Kaggle.ipynb"
       - "benchmarks/lineborn_trained_release_acceptance_v6.py"
+      - "benchmarks/lineborn_v6_kaggle_benchmark.py"
       - "runtime/lineborn-v6-models.json"
       - ".github/workflows/validate-lineborn-v6-deployment.yml"
   workflow_dispatch:
@@ -31,7 +32,8 @@ jobs:
             training/merge_sales_adapter.py \
             training/lineborn_v6_colab_runner.py \
             training/lineborn_v6_kaggle_runner.py \
-            benchmarks/lineborn_trained_release_acceptance_v6.py
+            benchmarks/lineborn_trained_release_acceptance_v6.py \
+            benchmarks/lineborn_v6_kaggle_benchmark.py
       - name: Colab notebook validation
         run: |
           python - <<'PY'
