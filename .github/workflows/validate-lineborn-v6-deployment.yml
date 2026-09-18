@@ -9,6 +9,8 @@ on:
       - "training/lineborn_v6_colab_runner.py"
       - "training/Lineborn_V6_Deploy_Colab.ipynb"
       - "training/Lineborn_V6_Deploy_Colab_Fallback.ipynb"
+      - "training/lineborn_v6_kaggle_runner.py"
+      - "training/Lineborn_V6_Deploy_Kaggle.ipynb"
       - "benchmarks/lineborn_trained_release_acceptance_v6.py"
       - "runtime/lineborn-v6-models.json"
       - ".github/workflows/validate-lineborn-v6-deployment.yml"
@@ -28,6 +30,7 @@ jobs:
             training/verify_lineborn_v6_export.py \
             training/merge_sales_adapter.py \
             training/lineborn_v6_colab_runner.py \
+            training/lineborn_v6_kaggle_runner.py \
             benchmarks/lineborn_trained_release_acceptance_v6.py
       - name: Colab notebook validation
         run: |
@@ -38,6 +41,7 @@ jobs:
           for filename in (
               'training/Lineborn_V6_Deploy_Colab.ipynb',
               'training/Lineborn_V6_Deploy_Colab_Fallback.ipynb',
+              'training/Lineborn_V6_Deploy_Kaggle.ipynb',
           ):
               path = Path(filename)
               nb = json.loads(path.read_text(encoding='utf-8'))
@@ -60,6 +64,14 @@ jobs:
           assert 'lineborn-v6-balanced-q4_k_m.gguf' in runner
           assert 'lineborn-v6-performance-q8_0.gguf' in runner
           print('Drive-auth fallback contract OK')
+
+          kaggle = Path('training/lineborn_v6_kaggle_runner.py').read_text(encoding='utf-8')
+          assert '/kaggle/input' in kaggle
+          assert '/kaggle/working' in kaggle
+          assert 'Qwen/Qwen3-4B-Instruct-2507' in kaggle
+          assert 'lineborn-v6-balanced-q4_k_m.gguf' in kaggle
+          assert 'lineborn-v6-performance-q8_0.gguf' in kaggle
+          print('Kaggle deployment contract OK')
           PY
       - name: Shell syntax
         run: bash -n training/export_lineborn_v6_gguf.sh
