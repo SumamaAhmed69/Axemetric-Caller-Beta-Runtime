@@ -17,9 +17,11 @@ BASE_MODEL = "Qwen/Qwen3-4B-Instruct-2507"
 
 INPUT_ROOT = Path("/kaggle/input")
 WORK_ROOT = Path("/kaggle/working")
-ARCHIVE = WORK_ROOT / "lineborn-sales-adapters-v6.zip"
-EXTRACT_DIR = WORK_ROOT / "lineborn-v6-adapters"
-EXPORT_DIR = WORK_ROOT / "lineborn-v6-export"
+SCRATCH_ROOT = Path("/kaggle/tmp/lineborn-v6-build")
+ARCHIVE = SCRATCH_ROOT / "lineborn-sales-adapters-v6.zip"
+EXTRACT_DIR = SCRATCH_ROOT / "lineborn-v6-adapters"
+EXPORT_DIR = SCRATCH_ROOT / "lineborn-v6-export"
+FINAL_DIR = WORK_ROOT / "lineborn-v6-export"
 
 def run(cmd, **kwargs):
     print("+", " ".join(map(str, cmd)), flush=True)
@@ -34,10 +36,17 @@ def preflight() -> None:
         raise SystemExit(
             "No NVIDIA GPU detected. In Kaggle Notebook settings choose Accelerator > GPU T4 x2."
         ) from exc
-    _total, _used, free = shutil.disk_usage(WORK_ROOT)
-    print(f"/kaggle/working free: {free / 1024**3:.1f} GiB", flush=True)
+    SCRATCH_ROOT.mkdir(parents=True, exist_ok=True)
+    _total, _used, free = shutil.disk_usage(SCRATCH_ROOT)
+    print(f"Scratch disk free: {free / 1024**3:.1f} GiB", flush=True)
     if free < 30 * 1024**3:
-        raise SystemExit("At least ~30 GiB free is recommended for the merge/export workspace.")
+        raise SystemExit(
+            "Kaggle scratch space is below 30 GiB in this session. Restart the Kaggle session and rerun."
+        )
+    _wt, _wu, working_free = shutil.disk_usage(WORK_ROOT)
+    print(f"/kaggle/working persistent space free: {working_free / 1024**3:.1f} GiB", flush=True)
+    if working_free < 8 * 1024**3:
+        raise SystemExit("Need at least ~8 GiB free in /kaggle/working for the final Q4 + Q8 outputs.")
     if not INPUT_ROOT.exists():
         raise SystemExit("/kaggle/input is missing. Attach the Dataset containing all 8 adapter parts.")
 
@@ -105,8 +114,8 @@ def prepare_environment() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     os.chdir(repo_root)
     # Keep large HF cache outside /kaggle/working so notebook output stays compact.
-    os.environ.setdefault("HF_HOME", "/tmp/lineborn-hf-cache")
-    os.environ.setdefault("TRANSFORMERS_CACHE", "/tmp/lineborn-hf-cache")
+    os.environ.setdefault("HF_HOME", "/kaggle/tmp/lineborn-hf-cache")
+    os.environ.setdefault("TRANSFORMERS_CACHE", "/kaggle/tmp/lineborn-hf-cache")
     run([sys.executable, "-m", "pip", "install", "-q", "-r", "training/requirements-colab.txt"])
     missing = [tool for tool in ("cmake", "g++", "git") if shutil.which(tool) is None]
     if missing:
@@ -144,8 +153,8 @@ def build_candidates(adapter: Path) -> None:
     env["LINEBORN_PERFORMANCE_QUANT"] = "Q8_0"
     env["LINEBORN_KEEP_F16"] = "0"
     env["LINEBORN_PYTHON"] = sys.executable
-    env["HF_HOME"] = "/tmp/lineborn-hf-cache"
-    env["TRANSFORMERS_CACHE"] = "/tmp/lineborn-hf-cache"
+    env["HF_HOME"] = "/kaggle/tmp/lineborn-hf-cache"
+    env["TRANSFORMERS_CACHE"] = "/kaggle/tmp/lineborn-hf-cache"
     # One T4 has enough memory for the 4B FP16 merge; leave the second T4 free.
     env.setdefault("CUDA_VISIBLE_DEVICES", "0")
     run([
@@ -180,31 +189,29 @@ def validate_outputs() -> list[str]:
     print("\nDeployment manifest:\n", json.dumps(manifest, indent=2), flush=True)
     return required
 
-def cleanup_transients(required: list[str]) -> None:
-    # Kaggle persists /kaggle/working outputs. Keep only the files needed to ship/test,
-    # avoiding the 20 GB saved-output ceiling.
-    print("\nCleaning transient build files before Kaggle output is saved...", flush=True)
-    keep = {EXPORT_DIR / name for name in required}
-    for child in list(EXPORT_DIR.iterdir()):
-        if child in keep:
-            continue
-        if child.is_dir():
-            shutil.rmtree(child, ignore_errors=True)
-        else:
-            try:
-                child.unlink()
-            except FileNotFoundError:
-                pass
-    for path in (EXTRACT_DIR, ARCHIVE):
-        if path.is_dir():
-            shutil.rmtree(path, ignore_errors=True)
-        elif path.exists():
-            path.unlink()
-    shutil.rmtree(Path("/tmp/lineborn-hf-cache"), ignore_errors=True)
+def persist_outputs_and_cleanup(required: list[str]) -> None:
+    # Build entirely on Kaggle scratch disk, then copy only final deployable artifacts
+    # into /kaggle/working so they are eligible for notebook output persistence.
+    print("\nCopying final Lineborn artifacts into persistent /kaggle/working...", flush=True)
+    if FINAL_DIR.exists():
+        shutil.rmtree(FINAL_DIR)
+    FINAL_DIR.mkdir(parents=True, exist_ok=True)
 
-    total = sum((EXPORT_DIR / name).stat().st_size for name in required)
-    print(f"Final saved output footprint: {total / 1024**3:.3f} GiB", flush=True)
-    print("✅ Final files are in:", EXPORT_DIR, flush=True)
+    for name in required:
+        src = EXPORT_DIR / name
+        dst = FINAL_DIR / name
+        shutil.copy2(src, dst)
+        if src.stat().st_size != dst.stat().st_size:
+            raise RuntimeError(f"Persistent copy size mismatch for {name}")
+        print("  saved:", dst, flush=True)
+
+    total = sum((FINAL_DIR / name).stat().st_size for name in required)
+    print(f"Final persistent output footprint: {total / 1024**3:.3f} GiB", flush=True)
+
+    print("Cleaning scratch build data...", flush=True)
+    shutil.rmtree(SCRATCH_ROOT, ignore_errors=True)
+    shutil.rmtree(Path("/kaggle/tmp/lineborn-hf-cache"), ignore_errors=True)
+    print("✅ Final files are in:", FINAL_DIR, flush=True)
 
 def main() -> int:
     preflight()
@@ -214,9 +221,9 @@ def main() -> int:
     adapter = verify_extract()
     build_candidates(adapter)
     required = validate_outputs()
-    cleanup_transients(required)
+    persist_outputs_and_cleanup(required)
     print("\n✅ Lineborn v6 Kaggle candidate build complete.", flush=True)
-    print("Save/Commit the notebook version so Kaggle persists /kaggle/working output.", flush=True)
+    print("Save/Commit the notebook version so Kaggle persists /kaggle/working/lineborn-v6-export.", flush=True)
     print("Next gate: benchmarks/lineborn_trained_release_acceptance_v6.py", flush=True)
     return 0
 
