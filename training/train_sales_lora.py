@@ -23,6 +23,7 @@ from transformers import (
 )
 
 BASE_MODEL = "Qwen/Qwen3-4B-Instruct-2507"
+BASE_REVISION = "cdbee75f17c01a7cc42f958dc650907174af0554"
 TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
 
 
@@ -102,6 +103,7 @@ def main() -> int:
     parser.add_argument("--data", default="training/data/sales_sft.jsonl")
     parser.add_argument("--output", default="training/output/lineborn-sales-sft")
     parser.add_argument("--base-model", default=BASE_MODEL)
+    parser.add_argument("--base-revision", default=BASE_REVISION)
     parser.add_argument("--max-length", type=int, default=2048)
     parser.add_argument("--epochs", type=float, default=2.0)
     parser.add_argument("--lr", type=float, default=1e-4)
@@ -116,7 +118,7 @@ def main() -> int:
     set_seed(args.seed)
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
-    tokenizer = AutoTokenizer.from_pretrained(args.base_model, use_fast=True)
+    tokenizer = AutoTokenizer.from_pretrained(args.base_model, revision=args.base_revision, use_fast=True)
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -129,6 +131,7 @@ def main() -> int:
     )
     model = AutoModelForCausalLM.from_pretrained(
         args.base_model,
+        revision=args.base_revision,
         quantization_config=quant,
         device_map={"": 0},
         dtype=compute_dtype,
@@ -148,7 +151,7 @@ def main() -> int:
     )
     model.print_trainable_parameters()
 
-    dataset = load_dataset("json", data_files=str(Path(args.data)), split="train")
+    dataset = load_dataset("json", data_files=str(Path(args.data)), split="train")  # nosec B615 - local JSON builder + explicit local file
     split = dataset.train_test_split(test_size=0.08, seed=args.seed)
 
     def mapper(row):

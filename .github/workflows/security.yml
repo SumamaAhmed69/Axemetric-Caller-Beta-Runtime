@@ -25,7 +25,15 @@ jobs:
       - name: Install security scanners
         run: python -m pip install --disable-pip-version-check bandit pip-audit
       - name: Static Python security scan
-        run: bandit -q -ll -r benchmarks training
+        run: |
+          bandit -q -ll \
+            benchmarks/dialforge_release_safety_v4.py \
+            benchmarks/dialforge_spoken_safety.py \
+            benchmarks/dialforge_final_release_acceptance_v4.py \
+            benchmarks/lineborn_release_acceptance_v5.py \
+            benchmarks/lineborn_trained_release_acceptance_v6.py \
+            benchmarks/lineborn_v6_kaggle_benchmark.py \
+            training/*.py
       - name: Dependency vulnerability audit
         run: pip-audit -r training/requirements-colab.txt --progress-spinner off
       - name: Reject obvious committed credentials

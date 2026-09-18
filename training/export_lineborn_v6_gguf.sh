@@ -5,6 +5,7 @@ STAGE="bootstrap"
 trap 'code=$?; echo >&2; echo "❌ Lineborn v6 export failed during stage: $STAGE (exit $code)" >&2; echo "Command: $BASH_COMMAND" >&2; exit $code' ERR
 
 BASE_MODEL="${LINEBORN_BASE_MODEL:-Qwen/Qwen3-4B-Instruct-2507}"
+BASE_REVISION="${LINEBORN_BASE_REVISION:-cdbee75f17c01a7cc42f958dc650907174af0554}"
 ADAPTER_DIR="${1:-training/output/lineborn-sales-dpo/adapter}"
 OUTPUT_DIR="${2:-training/output/lineborn-v6-export}"
 BALANCED_QUANT="${LINEBORN_BALANCED_QUANT:-Q4_K_M}"
@@ -56,6 +57,7 @@ else
   rm -rf "$MERGED_DIR"
   "$PYTHON_BIN" training/merge_sales_adapter.py \
     --base-model "$BASE_MODEL" \
+    --base-revision "$BASE_REVISION" \
     --adapter "$ADAPTER_DIR" \
     --output "$MERGED_DIR" \
     --device auto \
@@ -86,7 +88,7 @@ print(f"Converter torch preserved: {torch.__version__}; cuda_available={torch.cu
 PY
 
 STAGE="canonical tokenizer restore"
-"$PYTHON_BIN" - "$BASE_MODEL" "$MERGED_DIR" <<'PY'
+"$PYTHON_BIN" - "$BASE_MODEL" "$BASE_REVISION" "$MERGED_DIR" <<'PY'
 from pathlib import Path
 import shutil
 import sys
@@ -94,7 +96,8 @@ import sys
 from huggingface_hub import hf_hub_download
 
 repo_id = sys.argv[1]
-merged_dir = Path(sys.argv[2])
+revision = sys.argv[2]
+merged_dir = Path(sys.argv[3])
 # LoRA training never changes tokenizer weights/vocabulary. Always restore the
 # exact upstream tokenizer artifacts before GGUF conversion. This avoids
 # tokenizer serialization drift between Transformers versions (notably
@@ -104,7 +107,7 @@ optional = ("special_tokens_map.json", "generation_config.json")
 
 for name in required + optional:
     try:
-        src = Path(hf_hub_download(repo_id=repo_id, filename=name))
+        src = Path(hf_hub_download(repo_id=repo_id, filename=name, revision=revision))
     except Exception:
         if name in required:
             raise

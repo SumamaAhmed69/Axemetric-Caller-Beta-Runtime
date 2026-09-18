@@ -21,7 +21,7 @@
       "gguf": "lineborn-v6-balanced-q4_k_m.gguf",
       "sha256": "467514dd216d25b7e291345f11dba9f57d2515473434f13715d159e2db6fa398",
       "benchmark_sales_score": 96.9,
-      "benchmark_tool_accuracy": 100.0,
+      "benchmark_tool_accuracy": 100,
       "benchmark_critical_failures": 0
     },
     "performance": {
@@ -29,11 +29,18 @@
       "quantization": "Q8_0",
       "gguf": "lineborn-v6-performance-q8_0.gguf",
       "sha256": "1681cd11fc0509b537ed724405596c46d6bec59b30d9c4d0a00f2e3dd0562f7a",
-      "benchmark_sales_score": 97.0,
-      "benchmark_tool_accuracy": 100.0,
+      "benchmark_sales_score": 97,
+      "benchmark_tool_accuracy": 100,
       "benchmark_critical_failures": 0
     }
   },
-  "removed_profiles": ["compatibility-1.7b"],
-  "release_policy": "Balanced is the default. Performance is optional. Do not ship stock Qwen or 1.7B compatibility models in the Lineborn v6 beta path. Real Direct SIP/PSTN and clean Windows installer acceptance remain mandatory before public release."
+  "removed_profiles": [
+    "compatibility-1.7b"
+  ],
+  "release_policy": "Balanced is the default. Performance is optional. Do not ship stock Qwen or 1.7B compatibility models in the Lineborn v6 beta path. Real Direct SIP/PSTN and clean Windows installer acceptance remain mandatory before public release.",
+  "base_revision": "cdbee75f17c01a7cc42f958dc650907174af0554",
+  "security": {
+    "hf_base_revision_pinned": true,
+    "security_workflow": ".github/workflows/security.yml"
+  }
 }

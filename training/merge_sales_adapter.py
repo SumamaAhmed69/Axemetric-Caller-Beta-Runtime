@@ -9,6 +9,7 @@ from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 BASE_MODEL = "Qwen/Qwen3-4B-Instruct-2507"
+BASE_REVISION = "cdbee75f17c01a7cc42f958dc650907174af0554"
 
 
 def resolve_device(requested: str) -> str:
@@ -34,6 +35,7 @@ def resolve_dtype(requested: str, device: str):
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-model", default=BASE_MODEL)
+    parser.add_argument("--base-revision", default=BASE_REVISION)
     parser.add_argument("--adapter", default="training/output/lineborn-sales-dpo/adapter")
     parser.add_argument("--output", default="training/output/lineborn-sales-merged")
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
@@ -47,9 +49,10 @@ def main() -> int:
     device_map = {"": 0} if device == "cuda" else "cpu"
 
     print(f"Loading {args.base_model} on {device} as {dtype}", flush=True)
-    tokenizer = AutoTokenizer.from_pretrained(args.base_model, use_fast=True)
+    tokenizer = AutoTokenizer.from_pretrained(args.base_model, revision=args.base_revision, use_fast=True)
     base = AutoModelForCausalLM.from_pretrained(
         args.base_model,
+        revision=args.base_revision,
         torch_dtype=dtype,
         device_map=device_map,
         low_cpu_mem_usage=True,

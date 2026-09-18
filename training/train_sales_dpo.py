@@ -15,6 +15,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import DPOConfig, DPOTrainer
 
 BASE_MODEL = "Qwen/Qwen3-4B-Instruct-2507"
+BASE_REVISION = "cdbee75f17c01a7cc42f958dc650907174af0554"
 
 
 def compatible_init_kwargs(cls, values: dict[str, Any], aliases: dict[str, str] | None = None, label: str | None = None) -> dict[str, Any]:
@@ -41,6 +42,7 @@ def main() -> int:
     parser.add_argument("--adapter", default="training/output/lineborn-sales-sft/adapter")
     parser.add_argument("--output", default="training/output/lineborn-sales-dpo")
     parser.add_argument("--base-model", default=BASE_MODEL)
+    parser.add_argument("--base-revision", default=BASE_REVISION)
     parser.add_argument("--epochs", type=float, default=1.0)
     parser.add_argument("--lr", type=float, default=2e-5)
     parser.add_argument("--beta", type=float, default=0.1)
@@ -52,7 +54,7 @@ def main() -> int:
     if not torch.cuda.is_available():
         raise SystemExit("CUDA GPU required")
     set_seed(args.seed)
-    tokenizer = AutoTokenizer.from_pretrained(args.base_model, use_fast=True)
+    tokenizer = AutoTokenizer.from_pretrained(args.base_model, revision=args.base_revision, use_fast=True)
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -65,6 +67,7 @@ def main() -> int:
     )
     base = AutoModelForCausalLM.from_pretrained(
         args.base_model,
+        revision=args.base_revision,
         quantization_config=quant,
         device_map={"": 0},
         dtype=compute_dtype,
@@ -72,7 +75,7 @@ def main() -> int:
     base.config.use_cache = False
     model = PeftModel.from_pretrained(base, args.adapter, is_trainable=True)
 
-    dataset = load_dataset("json", data_files=str(Path(args.data)), split="train")
+    dataset = load_dataset("json", data_files=str(Path(args.data)), split="train")  # nosec B615 - local JSON builder + explicit local file
 
     def format_row(row):
         prompt = tokenizer.apply_chat_template(
