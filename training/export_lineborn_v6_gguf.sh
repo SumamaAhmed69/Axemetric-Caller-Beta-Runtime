@@ -73,9 +73,17 @@ git -C "$LLAMA_CPP_DIR" fetch --depth 1 origin "$LLAMA_CPP_REF"
 git -C "$LLAMA_CPP_DIR" checkout --detach -f FETCH_HEAD
 
 STAGE="llama.cpp Python dependencies"
-if [[ -f "$LLAMA_CPP_DIR/requirements.txt" ]]; then
-  "$PYTHON_BIN" -m pip install -q -r "$LLAMA_CPP_DIR/requirements.txt"
+# The top-level llama.cpp requirements also install a CPU-only torch wheel.
+# Kaggle already provides a working CUDA torch build, and the Qwen conversion
+# only needs the converter's shared Python dependencies. Keep CUDA torch intact.
+CONVERTER_DEPS="$LLAMA_CPP_DIR/requirements/requirements-convert_legacy_llama.txt"
+if [[ -f "$CONVERTER_DEPS" ]]; then
+  "$PYTHON_BIN" -m pip install -q -r "$CONVERTER_DEPS"
 fi
+"$PYTHON_BIN" - <<'PY'
+import torch
+print(f"Converter torch preserved: {torch.__version__}; cuda_available={torch.cuda.is_available()}", flush=True)
+PY
 
 STAGE="canonical tokenizer restore"
 "$PYTHON_BIN" - "$BASE_MODEL" "$MERGED_DIR" <<'PY'
@@ -113,14 +121,17 @@ print(f"Canonical tokenizer validation OK: vocab_size={len(tok)}", flush=True)
 PY
 
 STAGE="HF to F16 GGUF conversion"
-if [[ -s "$F16_GGUF" ]]; then
-  echo "✅ F16 GGUF already exists; resuming: $F16_GGUF"
+F16_DONE="$F16_GGUF.complete"
+if [[ -s "$F16_GGUF" && -f "$F16_DONE" ]]; then
+  echo "✅ Completed F16 GGUF already exists; resuming: $F16_GGUF"
 else
-  rm -f "$F16_GGUF"
+  rm -f "$F16_GGUF" "$F16_DONE"
   "$PYTHON_BIN" "$LLAMA_CPP_DIR/convert_hf_to_gguf.py" \
     "$MERGED_DIR" \
     --outfile "$F16_GGUF" \
     --outtype f16
+  test -s "$F16_GGUF"
+  touch "$F16_DONE"
 fi
 
 STAGE="llama.cpp quantizer build"
@@ -144,17 +155,25 @@ if [[ -z "$QUANTIZER" ]]; then
 fi
 
 STAGE="Balanced Q4_K_M quantization"
-if [[ -s "$BALANCED_GGUF" ]]; then
-  echo "✅ Balanced GGUF already exists; resuming: $BALANCED_GGUF"
+BALANCED_DONE="$BALANCED_GGUF.complete"
+if [[ -s "$BALANCED_GGUF" && -f "$BALANCED_DONE" ]]; then
+  echo "✅ Completed Balanced GGUF already exists; resuming: $BALANCED_GGUF"
 else
+  rm -f "$BALANCED_GGUF" "$BALANCED_DONE"
   "$QUANTIZER" "$F16_GGUF" "$BALANCED_GGUF" "$BALANCED_QUANT"
+  test -s "$BALANCED_GGUF"
+  touch "$BALANCED_DONE"
 fi
 
 STAGE="Performance Q8_0 quantization"
-if [[ -s "$PERFORMANCE_GGUF" ]]; then
-  echo "✅ Performance GGUF already exists; resuming: $PERFORMANCE_GGUF"
+PERFORMANCE_DONE="$PERFORMANCE_GGUF.complete"
+if [[ -s "$PERFORMANCE_GGUF" && -f "$PERFORMANCE_DONE" ]]; then
+  echo "✅ Completed Performance GGUF already exists; resuming: $PERFORMANCE_GGUF"
 else
+  rm -f "$PERFORMANCE_GGUF" "$PERFORMANCE_DONE"
   "$QUANTIZER" "$F16_GGUF" "$PERFORMANCE_GGUF" "$PERFORMANCE_QUANT"
+  test -s "$PERFORMANCE_GGUF"
+  touch "$PERFORMANCE_DONE"
 fi
 
 STAGE="Ollama Modelfiles"
@@ -199,7 +218,7 @@ print(json.dumps(manifest, indent=2))
 PY
 
 if [[ "$KEEP_F16" != "1" ]]; then
-  rm -f "$F16_GGUF"
+  rm -f "$F16_GGUF" "$F16_DONE"
 fi
 
 echo
