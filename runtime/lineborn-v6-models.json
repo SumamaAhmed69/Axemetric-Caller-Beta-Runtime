@@ -1,19 +1,39 @@
 {
-  "schema": 1,
+  "schema": 2,
   "family": "lineborn-v6",
   "base_model": "Qwen/Qwen3-4B-Instruct-2507",
   "adapter_stage": "dpo",
+  "default_profile": "balanced",
+  "release_status": "trained-release-gate-passed",
+  "benchmark": {
+    "name": "lineborn-trained-release-acceptance-v6-kaggle",
+    "timestamp_utc": "2026-09-18T14:59:34Z",
+    "release_gate_pass": true,
+    "required_real_world_gates": [
+      "direct-sip-pstn",
+      "clean-windows-installer"
+    ]
+  },
   "profiles": {
     "balanced": {
       "ollama_model": "lineborn-v6-balanced",
       "quantization": "Q4_K_M",
-      "gguf": "lineborn-v6-balanced-q4_k_m.gguf"
+      "gguf": "lineborn-v6-balanced-q4_k_m.gguf",
+      "sha256": "467514dd216d25b7e291345f11dba9f57d2515473434f13715d159e2db6fa398",
+      "benchmark_sales_score": 96.9,
+      "benchmark_tool_accuracy": 100.0,
+      "benchmark_critical_failures": 0
     },
     "performance": {
       "ollama_model": "lineborn-v6-performance",
       "quantization": "Q8_0",
-      "gguf": "lineborn-v6-performance-q8_0.gguf"
+      "gguf": "lineborn-v6-performance-q8_0.gguf",
+      "sha256": "1681cd11fc0509b537ed724405596c46d6bec59b30d9c4d0a00f2e3dd0562f7a",
+      "benchmark_sales_score": 97.0,
+      "benchmark_tool_accuracy": 100.0,
+      "benchmark_critical_failures": 0
     }
   },
-  "release_policy": "Do not replace shipping runtime tags until both profiles pass benchmarks/lineborn_trained_release_acceptance_v6.py with zero critical failures and zero spoken/raw control leaks."
+  "removed_profiles": ["compatibility-1.7b"],
+  "release_policy": "Balanced is the default. Performance is optional. Do not ship stock Qwen or 1.7B compatibility models in the Lineborn v6 beta path. Real Direct SIP/PSTN and clean Windows installer acceptance remain mandatory before public release."
 }

@@ -1,161 +1,17 @@
-name: Publish Qwen Runtime Tiers
+name: Legacy stock-Qwen publisher (disabled)
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - "runtime/qwen-tier-release-v20.4.0-beta.3"
 
 permissions:
-  contents: write
-
-concurrency:
-  group: axemetric-qwen-runtime-tiers
-  cancel-in-progress: false
-
-env:
-  RELEASE_TAG: "beta-v20.4.0"
-  RUNTIME_VERSION: "20.4.0-beta.3"
-  OLLAMA_VERSION: "v0.34.0"
-  OLLAMA_URL: "https://github.com/ollama/ollama/releases/download/v0.34.0/ollama-windows-amd64.zip"
-  PART_SIZE_MB: "1700"
+  contents: read
 
 jobs:
-  publish-qwen-tiers:
-    runs-on: windows-latest
-    timeout-minutes: 120
+  legacy-publisher-disabled:
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Prepare portable Ollama and current manifest
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Refuse legacy stock-model publication
         run: |
-          $ErrorActionPreference = 'Stop'
-          New-Item -ItemType Directory -Force stage, work, release-assets | Out-Null
-          gh release view $env:RELEASE_TAG *> $null
-          if ($LASTEXITCODE -ne 0) { throw "Runtime release $env:RELEASE_TAG does not exist" }
-          gh release download $env:RELEASE_TAG --pattern manifest.json --dir work --clobber
-          if ($LASTEXITCODE -ne 0 -or -not (Test-Path work/manifest.json)) { throw 'Could not download current runtime manifest' }
-
-          curl.exe -L --fail --retry 5 --retry-delay 3 `
-            -o work/ollama-windows-amd64.zip `
-            $env:OLLAMA_URL
-          New-Item -ItemType Directory -Force stage/ollama | Out-Null
-          Expand-Archive work/ollama-windows-amd64.zip stage/ollama -Force
-          $ollama = Get-ChildItem stage/ollama -Recurse -Filter ollama.exe | Select-Object -First 1
-          if (-not $ollama) { throw 'ollama.exe missing from official Windows archive' }
-          if ($ollama.Directory.FullName -ne (Resolve-Path stage/ollama).Path) {
-            Copy-Item (Join-Path $ollama.Directory.FullName '*') stage/ollama -Recurse -Force
-          }
-          Remove-Item work/ollama-windows-amd64.zip -Force
-          Write-Host 'Current runtime manifest downloaded and portable Ollama prepared.'
-          Get-PSDrive C | Format-Table -AutoSize
-
-      - name: Build and upload compatibility Qwen 1.7B
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          ./runtime/build_qwen_tier.ps1 `
-            -Profile compatibility `
-            -Model 'qwen3:1.7b' `
-            -ReleaseTag $env:RELEASE_TAG `
-            -PartSizeMb ([int]$env:PART_SIZE_MB)
-
-      - name: Build and upload balanced Qwen 4B Instruct
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          ./runtime/build_qwen_tier.ps1 `
-            -Profile balanced `
-            -Model 'qwen3:4b-instruct' `
-            -ReleaseTag $env:RELEASE_TAG `
-            -PartSizeMb ([int]$env:PART_SIZE_MB)
-
-      - name: Build and upload performance Qwen 4B Instruct Q8
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          ./runtime/build_qwen_tier.ps1 `
-            -Profile performance `
-            -Model 'qwen3:4b-instruct-2507-q8_0' `
-            -ReleaseTag $env:RELEASE_TAG `
-            -PartSizeMb ([int]$env:PART_SIZE_MB)
-
-      - name: Publish profile-aware runtime manifest
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          @'
-          import json
-          import os
-          from datetime import datetime, timezone
-          from pathlib import Path
-
-          manifest_path = Path('work/manifest.json')
-          doc = json.loads(manifest_path.read_text(encoding='utf-8-sig'))
-          common = [p for p in doc.get('packages', []) if p.get('name') != 'qwen-model']
-          tiers = []
-          for profile in ('compatibility', 'balanced', 'performance'):
-              tier_path = Path('work') / f'qwen-package-{profile}.json'
-              if not tier_path.exists():
-                  raise SystemExit(f'missing package metadata: {tier_path}')
-              tiers.append(json.loads(tier_path.read_text(encoding='utf-8')))
-
-          models = {p['profiles'][0]: p['model'] for p in tiers}
-          doc['schema'] = 2
-          doc['version'] = os.environ['RUNTIME_VERSION']
-          doc['qwen_model'] = 'profile-selected'
-          doc['qwen_models'] = models
-          doc['generated_at'] = datetime.now(timezone.utc).isoformat()
-          doc['packages'] = common + tiers
-          Path('release-assets/manifest.json').write_text(json.dumps(doc, indent=2), encoding='utf-8')
-          print(json.dumps(models, indent=2))
-          '@ | python -
-
-          gh release upload $env:RELEASE_TAG release-assets/manifest.json --clobber
-          if ($LASTEXITCODE -ne 0) { throw 'Could not upload profile-aware runtime manifest' }
-
-          foreach ($asset in @('qwen-model.zip.part001','qwen-model.zip.part002')) {
-            gh release delete-asset $env:RELEASE_TAG $asset --yes 2>$null
-            if ($LASTEXITCODE -ne 0) {
-              Write-Host "Legacy asset already absent: $asset"
-            }
-          }
-          $global:LASTEXITCODE = 0
-
-      - name: Verify published tier manifest
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $url = "https://github.com/SumamaAhmed69/Axemetric-Caller-Beta-Runtime/releases/download/$env:RELEASE_TAG/manifest.json"
-          curl.exe -L --fail --retry 5 -o work/published-manifest.json $url
-          $doc = Get-Content work/published-manifest.json -Raw | ConvertFrom-Json
-          if ($doc.version -ne $env:RUNTIME_VERSION) { throw "Wrong runtime version: $($doc.version)" }
-          $qwen = @($doc.packages | Where-Object { $_.name -eq 'qwen-model' })
-          if ($qwen.Count -ne 3) { throw "Expected 3 Qwen packages, found $($qwen.Count)" }
-          $expected = @{
-            compatibility = 'qwen3:1.7b'
-            balanced = 'qwen3:4b-instruct'
-            performance = 'qwen3:4b-instruct-2507-q8_0'
-          }
-          foreach ($profile in $expected.Keys) {
-            $pkg = $qwen | Where-Object { $_.profiles -contains $profile }
-            if (-not $pkg) { throw "Missing Qwen package for $profile" }
-            if ($pkg.model -ne $expected[$profile]) { throw ("Wrong model for {0}: {1}" -f $profile, $pkg.model) }
-            if (-not $pkg.parts -or $pkg.parts.Count -lt 1) { throw "No release parts for $profile" }
-          }
-          Write-Host 'All three benchmark-selected Qwen runtime tiers are published and referenced by the beta.3 manifest.'
+          echo "This workflow is intentionally disabled."
+          echo "Lineborn v6 passed the trained-model release gate and no longer ships qwen3:1.7b or stock Qwen 4B tags."
+          echo "Package only the validated lineborn-v6-balanced and lineborn-v6-performance GGUF artifacts."

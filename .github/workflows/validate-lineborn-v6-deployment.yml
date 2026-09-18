@@ -13,6 +13,9 @@ on:
       - "training/Lineborn_V6_Deploy_Kaggle.ipynb"
       - "benchmarks/lineborn_trained_release_acceptance_v6.py"
       - "benchmarks/lineborn_v6_kaggle_benchmark.py"
+      - "benchmarks/dialforge_release_safety_v4.py"
+      - "benchmarks/dialforge_final_release_acceptance_v4.py"
+      - "benchmarks/lineborn_release_acceptance_v5.py"
       - "runtime/lineborn-v6-models.json"
       - ".github/workflows/validate-lineborn-v6-deployment.yml"
   workflow_dispatch:
@@ -33,7 +36,10 @@ jobs:
             training/lineborn_v6_colab_runner.py \
             training/lineborn_v6_kaggle_runner.py \
             benchmarks/lineborn_trained_release_acceptance_v6.py \
-            benchmarks/lineborn_v6_kaggle_benchmark.py
+            benchmarks/lineborn_v6_kaggle_benchmark.py \
+            benchmarks/dialforge_release_safety_v4.py \
+            benchmarks/dialforge_final_release_acceptance_v4.py \
+            benchmarks/lineborn_release_acceptance_v5.py
       - name: Colab notebook validation
         run: |
           python - <<'PY'
@@ -74,6 +80,27 @@ jobs:
           assert 'lineborn-v6-balanced-q4_k_m.gguf' in kaggle
           assert 'lineborn-v6-performance-q8_0.gguf' in kaggle
           print('Kaggle deployment contract OK')
+          PY
+      - name: Deterministic router regressions
+        env:
+          PYTHONPATH: benchmarks
+        run: |
+          python - <<'PY'
+          from dialforge_release_safety_v4 import route_turn
+
+          conditional = route_turn("I'll take a meeting only if you promise at least thirty percent more booked jobs in ninety days.")
+          assert conditional.kind == "spoken"
+          assert conditional.tool_name is None
+          assert "can't guarantee" in (conditional.spoken_reply or "").lower()
+
+          attribution = route_turn("Our tracking still can't connect AdSource to book job revenue.")
+          assert attribution.kind == "model"
+          assert attribution.tool_name is None
+
+          exact = route_turn("Book 2026-10-02 at 14:15 ET. That works for me.")
+          assert exact.tool_name == "book_meeting"
+
+          print("Router edge-case regressions OK")
           PY
       - name: Shell syntax
         run: bash -n training/export_lineborn_v6_gguf.sh

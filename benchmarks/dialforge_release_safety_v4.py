@@ -26,6 +26,16 @@ _AI_IDENTITY = re.compile(r"\b(?:are\s+you|is\s+this)\b.{0,35}\b(?:ai|a\.?i\.?|b
 _AUDIT_CHALLENGE = re.compile(r"\b(?:you|your\s+team|you\s+guys)\b.{0,45}\b(?:checked|reviewed|audited|analy[sz]ed|looked\s+at)\b.{0,70}\b(?:my|our|the)\s+(?:website|site|company|business|ads?|account)\b|\bprove\b.{0,50}\b(?:looked\s+at|reviewed|checked|audited|analy[sz]ed)\b.{0,50}\b(?:my|our)\s+(?:company|business|website|site|ads?|account)\b", re.I)
 _NO_SWITCH_BOUNDARY = re.compile(r"\b(?:don't|do\s+not|dont)\b.{0,90}\b(?:fire|replace|switch|drop|ditch)\b|\b(?:without|no\s+need\s+to)\s+(?:replacing|replace|switching|switch|firing|fire|dropping|drop|ditching|ditch)\b", re.I)
 _ACCEPTED_NEXT_STEP = re.compile(r"\bwhat(?:'s|\s+is)\s+the\s+next\s+step\b|\bwhat\s+would\s+happen\s+next\b|\bwhat\s+happens\s+next\b|\b(?:i(?:'m|\s+am)\s+willing\s+to\s+(?:see|do)|let(?:'s|\s+us)\s+do|show\s+me)\s+(?:the\s+)?diagnostic\b|\bif\s+you\s+can\b.{0,80}\bwhat\s+would\s+happen\s+next\b", re.I)
+
+# Prevent domain language such as "booked-job revenue" from being interpreted as
+# meeting-booking intent, especially after imperfect STT turns "booked job" into
+# "book job". Conditional result promises are also not valid scheduling consent.
+_BOOKED_JOB_CONTEXT = re.compile(r"\bbook(?:ed)?[-\s]+jobs?\b", re.I)
+_CONDITIONAL_RESULT_MEETING = re.compile(
+    r"\b(?:meeting|appointment|diagnostic|call)\b.{0,100}\bonly\s+if\b.{0,140}\b(?:guarantee|promise)\b|"
+    r"\bonly\s+if\b.{0,140}\b(?:guarantee|promise)\b.{0,100}\b(?:meeting|appointment|diagnostic|call)\b",
+    re.I,
+)
 _EXPLICIT_BOOKING_NEGATION = re.compile(r"\b(?:don't|do\s+not|dont)\s+book\b|\bnot\s+book\b|\bhold\s+off\b|\bconfirm\s+(?:it\s+)?later\b|\bi(?:'ll| will)\s+(?:confirm|let\s+you\s+know)\b|\bjust\s+checking\s+availability\b|\bchecking\s+availability\b", re.I)
 _TENTATIVE_BOOKING = re.compile(r"\btentative\b|\bprobably\s+(?:open|free|available)\b|\bmaybe\b|\bmight\b|\bcould\s+work\b", re.I)
 _BOOKING_CONSENT = re.compile(r"\b(?:book|schedule)\b|\bgo\s+ahead\b|\blet(?:'s| us)\s+do\s+it\b|\bworks\s+for\s+me\b|\bthat\s+works\b|\bworks\.?\s*(?:book|schedule)?\b", re.I)
@@ -105,7 +115,8 @@ def _preferred_channel(text:str)->str:
 def booking_components(text:str)->dict[str,Any]:
     value=_clean(text); date=_date_parts(value); clock=_time_parts(value); tz=_timezone(value)
     explicit=bool(_EXPLICIT_BOOKING_NEGATION.search(value)); tentative=bool(_TENTATIVE_BOOKING.search(value))
-    result={"date":date,"time":clock,"timezone":tz,"consent":bool(_BOOKING_CONSENT.search(value)) and not explicit and not tentative,"negated":explicit or tentative,"explicit_negation":explicit,"tentative":tentative}
+    consent_value=_BOOKED_JOB_CONTEXT.sub(" ",value)
+    result={"date":date,"time":clock,"timezone":tz,"consent":bool(_BOOKING_CONSENT.search(consent_value)) and not explicit and not tentative,"negated":explicit or tentative,"explicit_negation":explicit,"tentative":tentative}
     if date and clock and tz:
         y,mo,d=date; h,minute=clock; result["starts_at"]=f"{y:04d}-{mo:02d}-{d:02d}T{h:02d}:{minute:02d}:00"
     return result
@@ -137,9 +148,16 @@ def route_turn(text:str)->RouteDecision:
         return RouteDecision("spoken",spoken_reply="I haven't checked your website or run a prospect-specific audit.",reason="audit_denial")
     if _NO_SWITCH_BOUNDARY.search(value):
         return RouteDecision("spoken",spoken_reply="Understood. You don't need to switch or replace your current provider for the diagnostic.",reason="provider_boundary")
+    if _CONDITIONAL_RESULT_MEETING.search(value):
+        return RouteDecision(
+            "spoken",
+            spoken_reply="I can't guarantee a specific result. If you're still open to the diagnostic without that promise, we can schedule it.",
+            reason="conditional_guarantee_not_consent",
+        )
 
     b=booking_components(value)
-    scheduling=bool(_SCHEDULING_SIGNAL.search(value) or _VAGUE_SCHEDULING_SIGNAL.search(value) or any(b.get(k) for k in ("date","time","timezone")))
+    scheduling_value=_BOOKED_JOB_CONTEXT.sub(" ",value)
+    scheduling=bool(_SCHEDULING_SIGNAL.search(scheduling_value) or _VAGUE_SCHEDULING_SIGNAL.search(value) or any(b.get(k) for k in ("date","time","timezone")))
     if scheduling:
         if b["explicit_negation"]:return RouteDecision("spoken",spoken_reply="Okay. I won't book anything until you're ready.",reason="booking_not_authorized")
         missing=[name for name in ("date","time","timezone") if not b[name]]

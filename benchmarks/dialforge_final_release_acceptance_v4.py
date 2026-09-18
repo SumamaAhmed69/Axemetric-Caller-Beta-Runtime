@@ -310,6 +310,8 @@ def run_regressions():
         ("voicemail","Leave a message after the beep.",lambda d:d.tool_name=="record_outcome" and d.tool_arguments.get("outcome")=="voicemail"),
         ("exact","Book 2026-10-02 at 14:15 ET. That works for me.",lambda d:d.tool_name=="book_meeting"),
         ("tentative","September 26, 2026 at 2 PM Eastern could work.",lambda d:d.tool_name is None),
+        ("conditional_guarantee","I'll take a meeting only if you promise at least thirty percent more booked jobs in ninety days.",lambda d:d.kind=="spoken" and d.tool_name is None and "can't guarantee" in (d.spoken_reply or "").lower()),
+        ("booked_job_not_booking","Our tracking still can't connect AdSource to book job revenue.",lambda d:d.kind=="model" and d.tool_name is None),
     ]
     rr=[]
     for name,text,check in router_cases:
