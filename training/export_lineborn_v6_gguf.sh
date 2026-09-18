@@ -77,10 +77,46 @@ if [[ -f "$LLAMA_CPP_DIR/requirements.txt" ]]; then
   "$PYTHON_BIN" -m pip install -q -r "$LLAMA_CPP_DIR/requirements.txt"
 fi
 
+STAGE="canonical tokenizer restore"
+"$PYTHON_BIN" - "$BASE_MODEL" "$MERGED_DIR" <<'PY'
+from pathlib import Path
+import shutil
+import sys
+
+from huggingface_hub import hf_hub_download
+
+repo_id = sys.argv[1]
+merged_dir = Path(sys.argv[2])
+# LoRA training never changes tokenizer weights/vocabulary. Always restore the
+# exact upstream tokenizer artifacts before GGUF conversion. This avoids
+# tokenizer serialization drift between Transformers versions (notably
+# extra_special_tokens list-vs-dict incompatibilities).
+required = ("tokenizer.json", "tokenizer_config.json", "vocab.json", "merges.txt")
+optional = ("special_tokens_map.json", "generation_config.json")
+
+for name in required + optional:
+    try:
+        src = Path(hf_hub_download(repo_id=repo_id, filename=name))
+    except Exception:
+        if name in required:
+            raise
+        continue
+    dst = merged_dir / name
+    shutil.copy2(src, dst)
+    print(f"Restored canonical tokenizer artifact: {name}", flush=True)
+
+# Validate the canonical tokenizer with the same installed Transformers that
+# llama.cpp will call as its fallback tokenizer loader.
+from transformers import AutoTokenizer
+tok = AutoTokenizer.from_pretrained(merged_dir, use_fast=True, local_files_only=True)
+print(f"Canonical tokenizer validation OK: vocab_size={len(tok)}", flush=True)
+PY
+
 STAGE="HF to F16 GGUF conversion"
 if [[ -s "$F16_GGUF" ]]; then
   echo "✅ F16 GGUF already exists; resuming: $F16_GGUF"
 else
+  rm -f "$F16_GGUF"
   "$PYTHON_BIN" "$LLAMA_CPP_DIR/convert_hf_to_gguf.py" \
     "$MERGED_DIR" \
     --outfile "$F16_GGUF" \
