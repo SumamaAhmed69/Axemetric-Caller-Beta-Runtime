@@ -5,6 +5,7 @@ import hmac
 import io
 import json
 import os
+import sys
 import time
 from pathlib import Path
 from threading import RLock
@@ -18,20 +19,33 @@ from pydantic import BaseModel
 from chatterbox.tts_turbo import ChatterboxTurboTTS, Conditionals
 
 PORT = int(os.getenv("AXEMETRIC_CHATTERBOX_PORT", "8881"))
-REQUESTED_DEVICE = os.getenv("AXEMETRIC_CHATTERBOX_DEVICE", "auto").strip().lower()
-if REQUESTED_DEVICE == "auto":
+
+
+def _mps_available() -> bool:
+    try:
+        return bool(getattr(torch.backends, "mps", None) and torch.backends.mps.is_available())
+    except Exception:
+        return False
+
+
+def _select_device() -> tuple[str, str | None, str]:
+    requested = str(os.getenv("AXEMETRIC_CHATTERBOX_DEVICE", "auto") or "auto").strip().lower()
+    if requested not in {"auto", "cpu", "cuda", "mps"}:
+        requested = "auto"
+    if requested == "cpu":
+        return "cpu", None, requested
+    if requested == "cuda":
+        return ("cuda", None, requested) if torch.cuda.is_available() else ("cpu", "CUDA requested but unavailable; using CPU", requested)
+    if requested == "mps":
+        return ("mps", None, requested) if _mps_available() else ("cpu", "MPS requested but unavailable; using CPU", requested)
     if torch.cuda.is_available():
-        DEVICE = "cuda"
-    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        DEVICE = "mps"
-    else:
-        DEVICE = "cpu"
-elif REQUESTED_DEVICE == "mps":
-    DEVICE = "mps" if hasattr(torch.backends, "mps") and torch.backends.mps.is_available() else "cpu"
-elif REQUESTED_DEVICE == "cuda":
-    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-else:
-    DEVICE = "cpu"
+        return "cuda", None, requested
+    if _mps_available():
+        return "mps", None, requested
+    return "cpu", None, requested
+
+
+DEVICE, DEVICE_FALLBACK, REQUESTED_DEVICE = _select_device()
 NANO = os.getenv("AXEMETRIC_CHATTERBOX_NANO", "1") != "0"
 # Bump this whenever the pinned Chatterbox conditional representation changes.
 CONDITIONALS_CACHE_VERSION = "5de7a54-nano-v1" if NANO else "5de7a54-turbo-v1"
@@ -42,10 +56,19 @@ def data_root() -> Path:
     if override:
         return Path(override)
     if os.name == "nt":
-        return Path(os.getenv("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "Lineborn"
-    if __import__("sys").platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / "Lineborn"
-    return Path.home() / ".local" / "share" / "lineborn"
+        base = Path(os.getenv("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+        names = ("AxeCAll", "Lineborn", "Axemetric Caller")
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+        names = ("AxeCAll", "Lineborn", "Axemetric Caller")
+    else:
+        base = Path.home() / ".local" / "share"
+        names = ("axecall", "lineborn", "axemetric-caller")
+    for name in names:
+        candidate = base / name
+        if candidate.exists():
+            return candidate
+    return base / names[0]
 
 
 RUNTIME_DIR = data_root() / "runtime"
@@ -53,7 +76,7 @@ MARKER = RUNTIME_DIR / "voice-reference.json"
 REFERENCE = data_root() / "voices" / "reference.wav"
 CONDITIONALS_CACHE = RUNTIME_DIR / ("voice-conditionals-nano.pt" if NANO else "voice-conditionals-turbo.pt")
 CONDITIONALS_META = RUNTIME_DIR / ("voice-conditionals-nano.json" if NANO else "voice-conditionals-turbo.json")
-app = FastAPI(title="Lineborn Chatterbox", docs_url=None, redoc_url=None)
+app = FastAPI(title="AxeCAll Chatterbox", docs_url=None, redoc_url=None)
 _lock = RLock()
 _model: ChatterboxTurboTTS | None = None
 _loaded_revision = -1
@@ -228,6 +251,8 @@ def _status() -> dict:
     return {
         "ok": True,
         "device": DEVICE,
+        "device_requested": REQUESTED_DEVICE,
+        "device_fallback": DEVICE_FALLBACK,
         "nano": NANO,
         "loaded": _model is not None,
         "load_ms": _load_ms,
@@ -246,6 +271,11 @@ def health():
     return _status()
 
 
+@app.get("/v1/")
+def openai_root():
+    return {"ok": True, "service": "axecall-chatterbox", "model": "chatterbox", "device": DEVICE}
+
+
 @app.post("/warmup")
 def warmup():
     """Load Chatterbox and prepare or restore the selected voice before dialing."""
@@ -262,7 +292,7 @@ def warmup():
 def models():
     return {
         "object": "list",
-        "data": [{"id": "chatterbox", "object": "model", "owned_by": "lineborn-local"}],
+        "data": [{"id": "chatterbox", "object": "model", "owned_by": "axecall-local"}],
     }
 
 
