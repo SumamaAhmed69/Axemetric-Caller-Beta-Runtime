@@ -12,11 +12,11 @@ permissions:
   contents: write
 
 concurrency:
-  group: chatterbox-runtime-publish
+  group: beta15-runtime-manifest-publish
   cancel-in-progress: false
 
 env:
-  RELEASE_TAG: beta-v20.4.0
+  RELEASE_TAG: beta-v20.4.0-beta.15
   CHATTERBOX_SOURCE: git+https://github.com/resemble-ai/chatterbox.git@5de7a54aa4e5e2baadb0182dde554908b48b85c2
   PERTH_SOURCE: git+https://github.com/resemble-ai/Perth.git@ff1c8ac55a976971245cdd53c18d6131ca00d993
 
@@ -120,12 +120,20 @@ jobs:
           from pathlib import Path
           p = Path('manifest-work/manifest.json')
           doc = json.loads(p.read_text(encoding='utf-8-sig'))
-          packages = [x for x in doc.get('packages', []) if x.get('name') == 'chatterbox']
-          if len(packages) != 1:
-              raise SystemExit(f'Expected one chatterbox package, found {len(packages)}')
-          pkg = packages[0]
+          all_packages = list(doc.get('packages', []))
+          windows = [
+              x for x in all_packages
+              if x.get('name') == 'chatterbox'
+              and 'windows' in (x.get('platforms') or ['windows'])
+              and 'x64' in (x.get('arches') or ['x64'])
+          ]
+          if len(windows) != 1:
+              raise SystemExit(f'Expected one Windows x64 chatterbox package, found {len(windows)}')
+          pkg = windows[0]
           pkg.pop('file', None)
           pkg.pop('url', None)
+          pkg['platforms'] = ['windows']
+          pkg['arches'] = ['x64']
           pkg['sha256'] = '$digest'
           pkg['size'] = $size
           pkg['parts'] = [{
@@ -134,9 +142,12 @@ jobs:
               'sha256': '$digest',
               'size': $size,
           }]
+          qwen = [x for x in all_packages if x.get('name') == 'qwen-model']
+          if len(qwen) != 1 or qwen[0].get('model') != 'lineborn-v6-balanced':
+              raise SystemExit('Refusing to publish: beta.15 manifest no longer selects the trained Lineborn v6 model')
           doc['generated_at'] = datetime.now(timezone.utc).isoformat()
           Path('release-assets/manifest.json').write_text(json.dumps(doc, indent=2), encoding='utf-8')
-          print('Patched chatterbox package while preserving', len([x for x in doc.get('packages', []) if x.get('name') == 'qwen-model']), 'Qwen tiers')
+          print('Patched only the Windows x64 chatterbox package while preserving macOS and trained Qwen entries')
           "@ | python -
 
       - name: Publish and verify runtime assets
@@ -152,11 +163,18 @@ jobs:
 
           $release = gh api "repos/${{ github.repository }}/releases/tags/$env:RELEASE_TAG" | ConvertFrom-Json
           $manifest = Get-Content release-assets/manifest.json -Raw | ConvertFrom-Json
-          $pkg = @($manifest.packages | Where-Object { $_.name -eq 'chatterbox' })[0]
+          $pkg = @($manifest.packages | Where-Object {
+            $_.name -eq 'chatterbox' -and
+            ($_.platforms -contains 'windows') -and
+            ($_.arches -contains 'x64')
+          })[0]
           $published = @($release.assets | Where-Object { $_.name -eq 'chatterbox.zip.part001' })[0]
           if (-not $published) { throw 'Published chatterbox asset is missing' }
+          if (-not $pkg) { throw 'Published manifest is missing the Windows x64 chatterbox package' }
           if ([int64]$published.size -ne [int64]$pkg.parts[0].size) { throw 'Published chatterbox size mismatch' }
           if ($published.digest -and $published.digest -ne "sha256:$($pkg.parts[0].sha256)") { throw 'Published chatterbox digest mismatch' }
           $qwen = @($manifest.packages | Where-Object { $_.name -eq 'qwen-model' })
-          if ($qwen.Count -ne 3) { throw "Qwen tier manifest was damaged; expected 3, found $($qwen.Count)" }
-          Write-Host 'Hardened Chatterbox runtime published and manifest verified.'
+          if ($qwen.Count -ne 1 -or $qwen[0].model -ne 'lineborn-v6-balanced') {
+            throw 'Trained Lineborn v6 manifest entry was damaged'
+          }
+          Write-Host 'Hardened beta.15 Chatterbox runtime published and manifest verified.'
