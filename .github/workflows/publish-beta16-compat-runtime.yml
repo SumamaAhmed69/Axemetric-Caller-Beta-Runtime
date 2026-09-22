@@ -59,23 +59,39 @@ jobs:
               raise SystemExit(f"Unexpected repository: {doc.get('repository')!r}")
 
           required = {"ollama", "qwen-model", "chatterbox", "speech-cache"}
-          packages = doc.get("packages") or []
-          for platform_name, arches in {"windows":["x64"], "macos":["x64","arm64"]}.items():
-              for arch in arches:
-                  available = set()
-                  for pkg in packages:
-                      platforms = pkg.get("platforms", pkg.get("platform", ["windows"]))
-                      if isinstance(platforms, str): platforms = [platforms]
-                      arches_v = pkg.get("arches", pkg.get("arch", ["x64"]))
-                      if isinstance(arches_v, str): arches_v = [arches_v]
-                      if platform_name in platforms and arch in arches_v:
-                          available.add(pkg.get("name"))
-                  missing = required - available
-                  if missing:
-                      raise SystemExit(f"{platform_name}/{arch} missing required runtime packages: {sorted(missing)}")
+          source_packages = doc.get("packages") or []
 
+          # AxeCAll beta.16 validates component names globally before target
+          # selection, while beta.15's multi-platform feed legitimately has
+          # duplicate component names for Windows and macOS variants. Publish
+          # a Windows-x64 compatibility feed for the current beta.16 Windows
+          # installer so each required component name appears exactly once.
+          packages = []
+          for pkg in source_packages:
+              platforms = pkg.get("platforms", pkg.get("platform", ["windows"]))
+              if isinstance(platforms, str):
+                  platforms = [platforms]
+              arches = pkg.get("arches", pkg.get("arch", ["x64"]))
+              if isinstance(arches, str):
+                  arches = [arches]
+              if "windows" in platforms and "x64" in arches:
+                  packages.append(pkg)
+
+          seen = set()
+          for pkg in packages:
+              name = pkg.get("name")
+              if name in seen:
+                  raise SystemExit(f"Windows beta.16 feed still duplicates component {name}")
+              seen.add(name)
+
+          missing = required - seen
+          if missing:
+              raise SystemExit(f"Windows/x64 feed missing required runtime packages: {sorted(missing)}")
+
+          doc["packages"] = packages
+          doc["platform_contract"] = 1
           Path("publish/manifest.json").write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
-          print("Prepared beta.16 compatibility manifest with", len(packages), "package descriptors")
+          print("Prepared Windows beta.16 compatibility manifest with", len(packages), "unique package descriptors")
           PY
 
       - name: Publish beta.16 runtime feed
