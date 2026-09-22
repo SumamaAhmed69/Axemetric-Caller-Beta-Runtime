@@ -1,0 +1,104 @@
+name: Publish AxeCAll beta.16 compatibility runtime feed
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/publish-beta16-compat-runtime.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: axecall-beta16-runtime-feed
+  cancel-in-progress: false
+
+env:
+  SOURCE_TAG: beta-v20.4.0-beta.15
+  RELEASE_TAG: beta-v20.4.0-beta.16
+  RUNTIME_VERSION: 20.4.0-beta.16
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build beta.16 manifest from verified beta.15 runtime assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p work publish
+          gh release download "$SOURCE_TAG" --pattern manifest.json --dir work --clobber
+          python - <<'PY'
+          import json, os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          source = Path("work/manifest.json")
+          doc = json.loads(source.read_text(encoding="utf-8-sig"))
+
+          # beta.16 does not change the heavyweight runtime payload. Reuse the
+          # already-published beta.15 assets by their immutable release URLs.
+          # The new release supplies the exact manifest URL expected by the
+          # AxeCAll 20.4.0-beta.16 installer.
+          doc["version"] = os.environ["RUNTIME_VERSION"]
+          doc["generated_at"] = datetime.now(timezone.utc).isoformat()
+
+          # Preserve the legacy schema-2 trusted GitHub beta feed contract used
+          # by beta.16's provisioner. A future release can move to schema 3 once
+          # the production runtime signing private key is provisioned in CI.
+          if int(doc.get("schema") or 0) != 2:
+              raise SystemExit(f"Expected source schema 2, got {doc.get('schema')!r}")
+          if doc.get("channel") != "beta-github":
+              raise SystemExit(f"Unexpected channel: {doc.get('channel')!r}")
+          if doc.get("repository") != "SumamaAhmed69/Axemetric-Caller-Beta-Runtime":
+              raise SystemExit(f"Unexpected repository: {doc.get('repository')!r}")
+
+          required = {"ollama", "qwen-model", "chatterbox", "speech-cache"}
+          packages = doc.get("packages") or []
+          for platform_name, arches in {"windows":["x64"], "macos":["x64","arm64"]}.items():
+              for arch in arches:
+                  available = set()
+                  for pkg in packages:
+                      platforms = pkg.get("platforms", pkg.get("platform", ["windows"]))
+                      if isinstance(platforms, str): platforms = [platforms]
+                      arches_v = pkg.get("arches", pkg.get("arch", ["x64"]))
+                      if isinstance(arches_v, str): arches_v = [arches_v]
+                      if platform_name in platforms and arch in arches_v:
+                          available.add(pkg.get("name"))
+                  missing = required - available
+                  if missing:
+                      raise SystemExit(f"{platform_name}/{arch} missing required runtime packages: {sorted(missing)}")
+
+          Path("publish/manifest.json").write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+          print("Prepared beta.16 compatibility manifest with", len(packages), "package descriptors")
+          PY
+
+      - name: Publish beta.16 runtime feed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG"               --target "$GITHUB_SHA"               --title "Lineborn Runtime 20.4.0 beta.16"               --notes "Compatibility runtime feed for AxeCAll 20.4.0-beta.16. Reuses the verified beta.15 heavyweight runtime assets; only the manifest release identity changes."
+          fi
+          gh release upload "$RELEASE_TAG" publish/manifest.json --clobber
+
+      - name: Verify public beta.16 manifest
+        run: |
+          set -euo pipefail
+          url="https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG/manifest.json"
+          curl -fL --retry 8 --retry-delay 2 -o published.json "$url"
+          python - <<'PY'
+          import json, os
+          doc=json.load(open("published.json", encoding="utf-8"))
+          assert doc["schema"] == 2
+          assert doc["version"] == os.environ["RUNTIME_VERSION"]
+          assert doc["channel"] == "beta-github"
+          assert doc["repository"] == os.environ["GITHUB_REPOSITORY"]
+          print("beta.16 runtime feed verified:", doc["version"], "packages=", len(doc.get("packages") or []))
+          PY
